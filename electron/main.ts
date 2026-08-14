@@ -5,9 +5,13 @@ import {
   dialog,
   globalShortcut,
   ipcMain,
+  Menu,
+  nativeImage,
   nativeTheme,
+  Notification,
   screen,
   shell,
+  Tray,
 } from 'electron'
 import type { NativeImage } from 'electron'
 import * as path from 'path'
@@ -53,6 +57,55 @@ function bootLog(msg: string): void {
 }
 
 let win: BrowserWindow | null = null
+let tray: Tray | null = null
+let trayCreated = false
+
+// ---- 系统托盘 ----
+function createTray(): boolean {
+  try {
+    const iconPath = app.isPackaged
+      ? path.join(process.resourcesPath, 'icon.png')
+      : path.join(__dirname, '../../build/icon.png')
+    const img = nativeImage.createFromPath(iconPath)
+    if (img.isEmpty()) return false
+    const small = img.resize({ width: 16, height: 16 })
+    tray = new Tray(small)
+    tray.setToolTip('Aurora — DeepSeek 桌面工作台')
+    tray.setContextMenu(
+      Menu.buildFromTemplate([
+        {
+          label: '显示 Aurora',
+          click: () => {
+            win?.show()
+            win?.focus()
+          },
+        },
+        {
+          label: '最小化到托盘',
+          click: () => win?.hide(),
+        },
+        { type: 'separator' },
+        {
+          label: '退出',
+          click: () => app.quit(),
+        },
+      ]),
+    )
+    tray.on('click', () => {
+      if (!win) return
+      if (win.isVisible() && win.isFocused()) {
+        win.hide()
+      } else {
+        win.show()
+        win.focus()
+      }
+    })
+    return true
+  } catch (err) {
+    bootLog('tray failed: ' + String(err))
+    return false
+  }
+}
 
 // ---- 窗口状态记忆 ----
 let boundsTimer: ReturnType<typeof setTimeout> | null = null
@@ -982,6 +1035,9 @@ async function runSmoke(w: BrowserWindow, errors: string[]): Promise<void> {
   // 自动备份断言
   if (report.autoBackupOk !== true) failures.push('自动备份未生成')
   if (report.proxySettingOk !== true) failures.push('代理设置存取异常')
+  report.trayOk = trayCreated
+  report.notifySupported = Notification.isSupported()
+  if (trayCreated !== true) failures.push('系统托盘创建失败')
   if (dom.editStarted !== true || dom.editFlowDone !== true)
     failures.push('编辑重发流程未完成')
   if (dom.editMsgs !== 2) failures.push(`编辑后消息数错误: ${dom.editMsgs}`)
@@ -1272,6 +1328,7 @@ app.whenReady().then(async () => {
   bootLog('kb init ok')
   const backupPath = doAutoBackup()
   bootLog('auto backup: ' + (backupPath ?? 'skipped'))
+  trayCreated = createTray()
   registerChatIpc(listModels)
   bootLog('chat ipc registered')
   // 恢复用户配置的 MCP 服务器（冒烟模式由 runSmoke 显式配置）
@@ -1310,5 +1367,7 @@ app.on('window-all-closed', () => {
 app.on('will-quit', () => {
   saveWindowBounds()
   globalShortcut.unregisterAll()
+  tray?.destroy()
+  tray = null
   closeDb()
 })

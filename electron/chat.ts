@@ -1,4 +1,4 @@
-import { ipcMain } from 'electron'
+import { BrowserWindow, ipcMain, Notification } from 'electron'
 import type { WebContents } from 'electron'
 import type { ModelConfig } from './db'
 import { executeTool, TOOL_DEFS } from './tools'
@@ -105,8 +105,13 @@ async function runChat(
   active.set(req.requestId, ac)
   const startAt = Date.now()
   let firstTokenAt = 0
+  let lastContentAcc = ''
   const onFirstToken = (): void => {
     if (!firstTokenAt) firstTokenAt = Date.now()
+  }
+  const onContent = (text: string): void => {
+    lastContentAcc += text
+    if (lastContentAcc.length > 400) lastContentAcc = lastContentAcc.slice(-300)
   }
   try {
     if (model.provider !== 'mock' && !model.apiKey) {
@@ -125,8 +130,8 @@ async function runChat(
       for (let round = 0; round < MAX_ROUNDS; round++) {
         const outcome =
           model.provider === 'mock'
-            ? await mockCallOnce(wc, req.requestId, ac.signal, messages, onFirstToken)
-            : await sseCallOnce(wc, req.requestId, model, ac.signal, messages, tools, onFirstToken)
+            ? await mockCallOnce(wc, req.requestId, ac.signal, messages, onFirstToken, onContent)
+            : await sseCallOnce(wc, req.requestId, model, ac.signal, messages, tools, onFirstToken, onContent)
         if (outcome.toolCalls.length === 0 || outcome.finish !== 'tool_calls') {
           break
         }
@@ -189,6 +194,7 @@ async function runChat(
       durationMs: Date.now() - startAt,
       firstTokenMs: firstTokenAt ? firstTokenAt - startAt : 0,
     })
+    notifyIfHidden(lastContentAcc)
   } catch (err) {
     const aborted = ac.signal.aborted
     emit(wc, 'chat:error', {
@@ -207,6 +213,29 @@ async function runChat(
   }
 }
 
+/** 窗口不在前台时发系统通知（冒烟模式禁用） */
+function notifyIfHidden(summary: string): void {
+  if (process.env.SMOKE === '1' || !Notification.isSupported()) return
+  try {
+    const win = BrowserWindow.getAllWindows()[0]
+    if (!win || win.isFocused()) return
+    if (!win.isVisible() || win.isMinimized()) {
+      const n = new Notification({
+        title: 'Aurora 回复完成',
+        body: summary.trim().slice(0, 80) || '已生成回复',
+        silent: true,
+      })
+      n.on('click', () => {
+        win.show()
+        win.focus()
+      })
+      n.show()
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
 // ---- OpenAI 兼容 SSE 单轮调用（累积 tool_calls）----
 const RESPONSE_TIMEOUT_MS = 180_000
 
@@ -218,6 +247,7 @@ async function sseCallOnce(
   messages: ApiChatMessage[],
   tools: unknown[],
   onFirstToken?: () => void,
+  onContent?: (t: string) => void,
 ): Promise<StreamOutcome> {
   // 组合外部停止信号与整体超时
   const ac = new AbortController()
@@ -273,6 +303,7 @@ async function sseCallOnce(
           }
           if (typeof delta.content === 'string' && delta.content) {
             onFirstToken?.()
+            onContent?.(delta.content)
             emit(wc, 'chat:delta', { requestId, content: delta.content })
           }
           if (Array.isArray(delta.tool_calls)) {
@@ -324,6 +355,7 @@ async function mockCallOnce(
   signal: AbortSignal,
   messages: ApiChatMessage[],
   onFirstToken?: () => void,
+  onContent?: (t: string) => void,
 ): Promise<StreamOutcome> {
   const lastUser = [...messages].reverse().find((m) => m.role === 'user')
   const userText =
@@ -479,6 +511,7 @@ async function mockCallOnce(
 
   for (const ch of chunks(content, 8)) {
     onFirstToken?.()
+    onContent?.(ch)
     emit(wc, 'chat:delta', { requestId, content: ch })
     await sleep(14, signal)
   }

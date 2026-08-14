@@ -57,6 +57,10 @@
       {
         "from": "scripts/mock-mcp-server.mjs",
         "to": "mock-mcp-server.mjs"
+      },
+      {
+        "from": "build/icon.png",
+        "to": "icon.png"
       }
     ],
     "win": {
