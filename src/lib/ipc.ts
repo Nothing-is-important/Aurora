@@ -1,5 +1,30 @@
 export type ThemeSource = 'system' | 'light' | 'dark'
 
+export interface ModelConfig {
+  id: string
+  name: string
+  provider: 'deepseek' | 'openai' | 'mock'
+  baseUrl: string
+  apiKey: string
+  modelId: string
+  temperature: number
+  maxTokens: number
+  topP: number
+  enabled: boolean
+}
+
+export interface ChatStartRequest {
+  requestId: string
+  modelId: string
+  messages: { role: string; content: string }[]
+}
+
+export interface ChatUsage {
+  prompt_tokens?: number
+  completion_tokens?: number
+  total_tokens?: number
+}
+
 export interface AuroraApi {
   smoke: boolean
   window: {
@@ -14,6 +39,25 @@ export interface AuroraApi {
     setSource: (s: ThemeSource) => void
     onSystemChanged: (cb: (dark: boolean) => void) => () => void
   }
+  models: {
+    list: () => Promise<ModelConfig[]>
+    save: (m: ModelConfig) => Promise<boolean>
+    remove: (id: string) => Promise<boolean>
+  }
+  settings: {
+    get: (key: string) => Promise<string | null>
+    set: (key: string, value: string) => Promise<boolean>
+  }
+  chat: {
+    start: (req: ChatStartRequest) => void
+    stop: (requestId: string) => void
+    onDelta: (cb: (p: { requestId: string; content?: string; reasoning?: string }) => void) => () => void
+    onDone: (cb: (p: { requestId: string; aborted: boolean }) => void) => () => void
+    onError: (cb: (p: { requestId: string; message: string; aborted: boolean }) => void) => () => void
+    onUsage: (cb: (p: { requestId: string; usage: ChatUsage }) => void) => () => void
+  }
+  smokeNotifyChatDone: () => void
+  smokeNotifyStopVerified: (p: { stoppedEarly: boolean; errored: boolean }) => void
 }
 
 declare global {

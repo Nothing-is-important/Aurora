@@ -1,11 +1,18 @@
 # Aurora 变更日志
 
-## 第 1 轮 · 项目骨架（进行中）
+## 第 1 轮 · 项目骨架 ✅（完成）
 
-- 初始化 Electron + React 18 + TypeScript + Vite 6 + Tailwind 3 工程
-- Electron 主进程：无边框窗口、交通灯 IPC、nativeTheme 主题桥接、冒烟截图模式
-- 预加载脚本：contextBridge 安全桥（窗口/主题/冒烟信号）
-- React 渲染层：三栏工作台（毛玻璃侧边栏 + 对话区 + 检查器面板）
+- 初始化 Electron 43 + React 18 + TypeScript + Vite 6 + Tailwind 3 工程
+- Electron 主进程：无边框窗口、交通灯 IPC、nativeTheme 主题桥接
+- 预加载脚本：contextBridge 安全桥（窗口/主题）
+- React 渲染层：三栏工作台（毛玻璃侧边栏 264 + 对话区 + 检查器 300）
 - 苹果风视觉：氛围光斑背景、玻璃材质、交通灯悬停符号、弹簧缓动、Inter 字体
 - 深浅色主题：跟随系统 + 手动循环切换（system → light → dark）
-- 冒烟测试框架：`npm run smoke` 自动截图浅/深色并捕获控制台错误
+- **数值化冒烟审计框架**：像素采样（交通灯颜色/亮度/方差）+ DOM 布局断言，自动截图存 `shots/` 供人工查看
+- 环境适配：绕过失效本地代理直连 npm，Electron 二进制走 npmmirror 镜像
+- 修复：冒烟模式下主进程主题被渲染层覆盖的问题（getSource 泄漏）
+
+### 第 1 轮审计结果
+- 浅色平均亮度 0.91 / 深色 0.11，主题切换生效 ✅
+- 交通灯红 146 / 黄 139 / 绿 161 像素命中 ✅
+- 布局 264 / 718 / 300，标题栏 44px，无水平溢出，零控制台错误 ✅

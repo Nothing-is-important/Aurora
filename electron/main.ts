@@ -2,6 +2,16 @@ import { app, BrowserWindow, ipcMain, nativeTheme } from 'electron'
 import type { NativeImage } from 'electron'
 import * as path from 'path'
 import * as fs from 'fs'
+import {
+  closeDb,
+  deleteModel,
+  getSetting,
+  initDb,
+  listModels,
+  saveModel,
+  setSetting,
+} from './db'
+import { registerChatIpc } from './chat'
 
 const SMOKE = process.env.SMOKE === '1'
 const DEV_URL = process.env.VITE_DEV_SERVER_URL
@@ -126,6 +136,14 @@ const DOM_AUDIT = `
     messages: document.querySelectorAll('[data-role]').length,
     userMsg: !!document.querySelector('[data-role="user"]'),
     assistantMsg: !!document.querySelector('[data-role="assistant"]'),
+    reasoning: !!document.querySelector('[data-reasoning]'),
+    codeBlock: !!document.querySelector('.code-block'),
+    hljs: !!document.querySelector('.hljs'),
+    katex: !!document.querySelector('.katex'),
+    copyBtn: !!document.querySelector('button[aria-label="复制代码"]'),
+    stopBtn: !!document.querySelector('button[aria-label="停止"]'),
+    errorCard: !!document.querySelector('[data-error]'),
+    modelPill: (document.querySelector('[data-model-pill]') || {}).textContent || '',
     sendBtn: !!document.querySelector('button[aria-label="发送"]'),
     newChatBtn: !!document.querySelector('button[aria-label="新对话"]'),
     suggestionChips: document.querySelectorAll('[data-suggestion]').length,
@@ -139,9 +157,25 @@ async function runSmoke(w: BrowserWindow, errors: string[]): Promise<void> {
   const failures: string[] = []
   const report: Record<string, unknown> = {}
 
-  // 浅色阶段（主进程强制 light，渲染层不干预）
+  // 等待渲染层完成两阶段验证：① Mock 对话完整流式 ② 中途停止截断
+  let stopVerified: { stoppedEarly: boolean; errored: boolean } | null = null
+  let stopResolve: (() => void) | null = null
+  const stopDone = new Promise<void>((resolve) => {
+    stopResolve = resolve
+  })
+  ipcMain.on('smoke:stop-verified', (_e, p) => {
+    stopVerified = p
+    if (stopResolve) {
+      stopResolve()
+      stopResolve = null
+    }
+  })
+  await Promise.race([stopDone, new Promise((r) => setTimeout(r, 35000))])
+  report.stopVerified = stopVerified
+
+  // 浅色阶段
   nativeTheme.themeSource = 'light'
-  await new Promise((r) => setTimeout(r, 2800))
+  await new Promise((r) => setTimeout(r, 1200))
   const light = await w.webContents.capturePage()
   fs.writeFileSync(path.join(shotsDir, 'smoke-light.png'), light.toPNG())
 
@@ -156,16 +190,7 @@ async function runSmoke(w: BrowserWindow, errors: string[]): Promise<void> {
 
   // 深色阶段
   nativeTheme.themeSource = 'dark'
-  console.log(
-    '[SMOKE] after set dark: shouldUseDarkColors =',
-    nativeTheme.shouldUseDarkColors,
-  )
   await new Promise((r) => setTimeout(r, 1000))
-  const mqCheck = (await w.webContents.executeJavaScript(
-    `({ mq: matchMedia('(prefers-color-scheme: dark)').matches, cls: document.documentElement.className })`,
-    true,
-  )) as { mq: boolean; cls: string }
-  report.mqCheck = mqCheck
   const dark = await w.webContents.capturePage()
   fs.writeFileSync(path.join(shotsDir, 'smoke-dark.png'), dark.toPNG())
   const darkStats = sampleStats(dark, { x: 0, y: 0, w: 1280, h: 820 })
@@ -181,11 +206,11 @@ async function runSmoke(w: BrowserWindow, errors: string[]): Promise<void> {
   // ---- 断言 ----
   if (red < 3 || yellow < 3 || green < 3)
     failures.push(`交通灯像素不足 red=${red} yellow=${yellow} green=${green}`)
-  if (lightStats.mean < 0.55) failures.push('浅色界面整体偏暗（疑似未应用浅色）')
-  if (darkStats.mean > 0.28) failures.push('深色界面整体偏亮（疑似未应用深色）')
+  if (lightStats.mean < 0.55) failures.push('浅色界面整体偏暗')
+  if (darkStats.mean > 0.28) failures.push('深色界面整体偏亮')
   if (!(lightStats.mean > darkStats.mean + 0.15))
     failures.push('浅深色亮度差不足，主题切换未生效')
-  if (lightStats.variance < 0.002) failures.push('画面方差过低，疑似空白未渲染')
+  if (lightStats.variance < 0.002) failures.push('画面方差过低，疑似空白')
   if (dom.root !== true) failures.push('root 未渲染')
   if (dom.trafficLights !== 3) failures.push(`交通灯数量错误: ${dom.trafficLights}`)
   if (dom.closeBtn !== true) failures.push('关闭按钮缺失')
@@ -194,12 +219,25 @@ async function runSmoke(w: BrowserWindow, errors: string[]): Promise<void> {
     failures.push(`侧边栏宽度异常: ${dom.sidebarW}`)
   if (!(dom.inspectorW >= 260 && dom.inspectorW <= 340))
     failures.push(`检查器宽度异常: ${dom.inspectorW}`)
-  if (!(dom.chatW >= 600)) failures.push(`对话区宽度异常: ${dom.chatW}`)
+  if (dom.chatW < 600) failures.push(`对话区宽度异常: ${dom.chatW}`)
   if (dom.overflowX === true) failures.push('存在水平溢出')
-  if (dom.messages !== 2) failures.push(`冒烟演示消息数量错误: ${dom.messages}`)
-  if (dom.sendBtn !== true || dom.newChatBtn !== true)
-    failures.push('关键按钮缺失')
+  if (dom.messages !== 4) failures.push(`冒烟消息数量错误: ${dom.messages}`)
+  if (dom.sendBtn !== true || dom.newChatBtn !== true) failures.push('关键按钮缺失')
   if (dom.darkClass !== true) failures.push('深色截图阶段 dark 类未应用')
+  // 聊天核心断言
+  const sv = stopVerified as { stoppedEarly: boolean; errored: boolean } | null
+  if (sv?.stoppedEarly !== true)
+    failures.push(
+      '中途停止验证失败: ' + (sv ? JSON.stringify(sv) : '未收到结果'),
+    )
+  if (sv?.errored !== false) failures.push('停止后消息进入了错误状态')
+  if (dom.reasoning !== true) failures.push('思维链面板缺失')
+  if (dom.codeBlock !== true) failures.push('代码块缺失')
+  if (dom.hljs !== true) failures.push('语法高亮未应用')
+  if (dom.katex !== true) failures.push('KaTeX 公式未渲染')
+  if (dom.copyBtn !== true) failures.push('复制按钮缺失')
+  if (dom.stopBtn !== false) failures.push('对话结束后停止按钮仍存在')
+  if (dom.errorCard !== false) failures.push('出现了错误卡片')
   if (errors.length > 0) failures.push('控制台错误: ' + errors.join(' | '))
 
   console.log('[SMOKE] report: ' + JSON.stringify(report, null, 2))
@@ -231,7 +269,25 @@ nativeTheme.on('updated', () => {
   win?.webContents.send('theme:system-changed', nativeTheme.shouldUseDarkColors)
 })
 
-app.whenReady().then(() => {
+// ---- 模型与设置 ----
+ipcMain.handle('models:list', () => listModels())
+ipcMain.handle('models:save', (_e, m) => {
+  saveModel(m)
+  return true
+})
+ipcMain.handle('models:delete', (_e, id: string) => {
+  deleteModel(id)
+  return true
+})
+ipcMain.handle('settings:get', (_e, key: string) => getSetting(key))
+ipcMain.handle('settings:set', (_e, key: string, value: string) => {
+  setSetting(key, value)
+  return true
+})
+
+app.whenReady().then(async () => {
+  await initDb({ file: SMOKE ? 'aurora-smoke.db' : 'aurora.db', fresh: SMOKE })
+  registerChatIpc(listModels)
   createWindow()
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
@@ -240,4 +296,8 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
+})
+
+app.on('will-quit', () => {
+  closeDb()
 })
