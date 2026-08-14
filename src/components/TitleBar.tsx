@@ -1,12 +1,11 @@
 import { useEffect, useState } from 'react'
-import { Search, Sparkles } from 'lucide-react'
 
-function LightGlyph({ kind }: { kind: 'close' | 'min' | 'max' }) {
+function WinGlyph({ kind }: { kind: 'min' | 'max' | 'restore' | 'close' }) {
   if (kind === 'close') {
     return (
-      <svg width="7" height="7" viewBox="0 0 8 8" fill="none">
+      <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
         <path
-          d="M1.2 1.2 L6.8 6.8 M6.8 1.2 L1.2 6.8"
+          d="M1 1 L9 9 M9 1 L1 9"
           stroke="currentColor"
           strokeWidth="1.1"
           strokeLinecap="round"
@@ -16,9 +15,9 @@ function LightGlyph({ kind }: { kind: 'close' | 'min' | 'max' }) {
   }
   if (kind === 'min') {
     return (
-      <svg width="7" height="7" viewBox="0 0 8 8" fill="none">
+      <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
         <path
-          d="M1.2 4 H6.8"
+          d="M0.5 5 H9.5"
           stroke="currentColor"
           strokeWidth="1.1"
           strokeLinecap="round"
@@ -26,14 +25,38 @@ function LightGlyph({ kind }: { kind: 'close' | 'min' | 'max' }) {
       </svg>
     )
   }
+  if (kind === 'max') {
+    return (
+      <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+        <rect
+          x="0.5"
+          y="0.5"
+          width="9"
+          height="9"
+          rx="1"
+          stroke="currentColor"
+          strokeWidth="1.1"
+        />
+      </svg>
+    )
+  }
+  // restore：两个叠放矩形
   return (
-    <svg width="7" height="7" viewBox="0 0 8 8" fill="none">
-      <path
-        d="M2.6 2.2 L5.8 2.2 L5.8 5.4 M2.2 5.8 L2.2 2.2 L5.8 2.2"
+    <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+      <rect
+        x="0.5"
+        y="2.5"
+        width="7"
+        height="7"
+        rx="1"
         stroke="currentColor"
         strokeWidth="1.1"
-        strokeLinecap="round"
-        strokeLinejoin="round"
+      />
+      <path
+        d="M2.5 2.5 V1.5 A1 1 0 0 1 3.5 0.5 H8.5 A1 1 0 0 1 9.5 1.5 V6.5 A1 1 0 0 1 8.5 7.5 H7.5"
+        stroke="currentColor"
+        strokeWidth="1.1"
+        fill="none"
       />
     </svg>
   )
@@ -49,49 +72,42 @@ export default function TitleBar({ title }: { title: string }) {
   }, [])
 
   return (
-    <div className="drag relative z-20 flex h-11 shrink-0 items-center px-3">
-      {/* 交通灯 */}
-      <div className="traffic-group flex items-center gap-2 pl-1">
-        <button
-          aria-label="关闭"
-          onClick={() => window.aurora.window.close()}
-          className="traffic-light bg-[#FF5F57] border border-black/10"
-        >
-          <LightGlyph kind="close" />
-        </button>
-        <button
-          aria-label="最小化"
-          onClick={() => window.aurora.window.minimize()}
-          className="traffic-light bg-[#FEBC2E] border border-black/10"
-        >
-          <LightGlyph kind="min" />
-        </button>
-        <button
-          aria-label={maximized ? '还原' : '最大化'}
-          onClick={() => window.aurora.window.maximizeToggle()}
-          className="traffic-light bg-[#28C840] border border-black/10"
-        >
-          <LightGlyph kind="max" />
-        </button>
-      </div>
-
-      {/* 居中标题 */}
-      <div className="pointer-events-none absolute inset-x-0 flex justify-center">
+    <div className="drag relative z-20 flex h-8 shrink-0 items-stretch border-b border-black/[0.05] dark:border-white/[0.07]">
+      {/* Windows 风格：标题居左 */}
+      <div className="flex min-w-0 items-center pl-3">
         <span
           data-titlebar-title
-          className="max-w-[46%] truncate text-[13px] font-medium text-black/55 dark:text-white/60"
+          className="truncate text-[12px] text-black/60 dark:text-white/65"
         >
           {title}
         </span>
       </div>
 
-      {/* 右侧工具 */}
-      <div className="no-drag ml-auto flex items-center gap-1">
-        <button className="flex h-7 w-7 items-center justify-center rounded-lg text-black/50 transition-colors hover:bg-black/[0.06] hover:text-black/80 dark:text-white/55 dark:hover:bg-white/[0.08] dark:hover:text-white/90">
-          <Search size={15} strokeWidth={2} />
+      {/* 右上角窗口控制按钮（Win11 风格） */}
+      <div className="no-drag ml-auto flex h-full items-stretch">
+        <button
+          aria-label="最小化"
+          title="最小化"
+          onClick={() => window.aurora.window.minimize()}
+          className="flex w-[46px] items-center justify-center text-black/65 transition-colors hover:bg-black/[0.06] dark:text-white/75 dark:hover:bg-white/[0.08]"
+        >
+          <WinGlyph kind="min" />
         </button>
-        <button className="flex h-7 w-7 items-center justify-center rounded-lg text-black/50 transition-colors hover:bg-black/[0.06] hover:text-black/80 dark:text-white/55 dark:hover:bg-white/[0.08] dark:hover:text-white/90">
-          <Sparkles size={15} strokeWidth={2} />
+        <button
+          aria-label={maximized ? '还原' : '最大化'}
+          title={maximized ? '还原' : '最大化'}
+          onClick={() => window.aurora.window.maximizeToggle()}
+          className="flex w-[46px] items-center justify-center text-black/65 transition-colors hover:bg-black/[0.06] dark:text-white/75 dark:hover:bg-white/[0.08]"
+        >
+          <WinGlyph kind={maximized ? 'restore' : 'max'} />
+        </button>
+        <button
+          aria-label="关闭"
+          title="关闭"
+          onClick={() => window.aurora.window.close()}
+          className="flex w-[46px] items-center justify-center text-black/65 transition-colors hover:bg-[#E81123] hover:text-white dark:text-white/75"
+        >
+          <WinGlyph kind="close" />
         </button>
       </div>
     </div>

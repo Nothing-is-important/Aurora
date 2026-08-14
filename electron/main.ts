@@ -245,6 +245,14 @@ function countNearColor(
 const DOM_AUDIT = `
 ;(async () => {
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+  const waitFor = async (cond, timeout) => {
+    const t0 = Date.now()
+    while (Date.now() - t0 < timeout) {
+      if (cond()) return true
+      await sleep(250)
+    }
+    return false
+  }
   const rect = (el) => {
     if (!el) return null
     const r = el.getBoundingClientRect()
@@ -255,8 +263,14 @@ const DOM_AUDIT = `
     root: !!document.getElementById('root'),
     darkClass: document.documentElement.classList.contains('dark'),
     overflowX: document.body.scrollWidth > document.body.clientWidth,
-    trafficLights: document.querySelectorAll('.traffic-light').length,
-    closeBtn: !!document.querySelector('button[aria-label="关闭"]'),
+    // Windows 风格窗口按钮：存在于右上角
+    winMinBtn: !!document.querySelector('button[aria-label="最小化"]'),
+    winMaxBtn: !!document.querySelector('button[aria-label="最大化"]'),
+    winCloseBtn: !!document.querySelector('button[aria-label="关闭"]'),
+    winCloseX: (() => {
+      const r = rect(document.querySelector('button[aria-label="关闭"]'))
+      return r ? r.x : 0
+    })(),
     titlebarH: rect(document.querySelector('.drag'))?.h,
     sidebarW: rect(asides[0])?.w,
     inspectorW: rect(asides[1])?.w,
@@ -328,6 +342,18 @@ const DOM_AUDIT = `
   await sleep(300)
   out.paletteClosed = !document.querySelector('[data-command-palette]')
 
+  // 检查器：折叠/展开往返（黑屏回归断言）
+  const collapseBtn = document.querySelector('button[title="收起面板"]')
+  if (collapseBtn) collapseBtn.click()
+  await sleep(350)
+  out.collapseWorks =
+    !document.querySelector('[data-inspector-open]') &&
+    !!document.getElementById('root')
+  const expandBtn = document.querySelector('button[aria-label="展开面板"]')
+  if (expandBtn) expandBtn.click()
+  await sleep(350)
+  out.expandWorks = !!document.querySelector('[data-inspector-open]')
+
   // 检查器：引用 tab / 工具 tab / 信息 tab
   const refsTab = Array.from(document.querySelectorAll('aside button')).find((b) =>
     (b.textContent || '').includes('引用')
@@ -351,6 +377,12 @@ const DOM_AUDIT = `
   out.usageMeta = (document.querySelector('[data-usage]') || {}).textContent || ''
   out.usageSummary = (document.querySelector('[data-usage-summary]') || {}).textContent || ''
 
+  // 导出按钮 UI 点击流程（冒烟模式直写 userData/exports）
+  const exportMdBtn = document.querySelector('[data-export-md]')
+  if (exportMdBtn) exportMdBtn.click()
+  out.exportUiDone = await waitFor(() => !!document.querySelector('[data-export-done]'), 8000)
+  await sleep(600)
+
   // 模板菜单
   const promptBtn = document.querySelector('[data-prompt-btn]')
   if (promptBtn) promptBtn.click()
@@ -371,15 +403,6 @@ const DOM_AUDIT = `
   const copyBtn = document.querySelector('button[aria-label="复制消息"]')
   if (copyBtn) copyBtn.click()
   await sleep(400)
-
-  const waitFor = async (cond, timeout) => {
-    const t0 = Date.now()
-    while (Date.now() - t0 < timeout) {
-      if (cond()) return true
-      await sleep(250)
-    }
-    return false
-  }
 
   // 错误重试：点击错误卡片的"重试"按钮
   const retryBtn = document.querySelector('[data-error-retry]')
@@ -423,6 +446,27 @@ const DOM_AUDIT = `
   await sleep(400)
   out.ctrlNCleared = document.querySelectorAll('[data-role]').length === 0
   out.ctrlNActiveNull = !document.querySelector('[data-conv-item][data-active="true"]')
+
+  // 模型下拉切换（最后执行，避免影响前面的 mock 流）
+  const pill = document.querySelector('[data-model-pill]')
+  if (pill) pill.click()
+  await sleep(300)
+  const modelItems = document.querySelectorAll('[data-model-item]')
+  out.modelMenuItems = modelItems.length
+  if (modelItems[1]) modelItems[1].click()
+  await sleep(300)
+  out.modelPillAfterSwitch = (
+    (document.querySelector('[data-model-pill]') || {}).textContent || ''
+  )
+  const pill2 = document.querySelector('[data-model-pill]')
+  if (pill2) pill2.click()
+  await sleep(300)
+  const modelItems2 = document.querySelectorAll('[data-model-item]')
+  if (modelItems2[0]) modelItems2[0].click()
+  await sleep(300)
+  out.modelPillRestored = (
+    (document.querySelector('[data-model-pill]') || {}).textContent || ''
+  )
   return out
 })()
 `
@@ -692,13 +736,8 @@ async function runSmoke(w: BrowserWindow, errors: string[]): Promise<void> {
   fs.writeFileSync(path.join(shotsDir, 'smoke-light.png'), light.toPNG())
 
   const lightStats = sampleStats(light, { x: 0, y: 0, w: 1280, h: 820 })
-  const tlRegion = { x: 0, y: 0, w: 120, h: 44 }
-  const red = countNearColor(light, tlRegion, [255, 95, 87], 28)
-  const yellow = countNearColor(light, tlRegion, [254, 188, 46], 28)
-  const green = countNearColor(light, tlRegion, [40, 200, 64], 28)
   report.lightMeanLum = +lightStats.mean.toFixed(3)
   report.lightVariance = +lightStats.variance.toFixed(4)
-  report.trafficPixels = { red, yellow, green }
 
   // 深色阶段
   nativeTheme.themeSource = 'dark'
@@ -717,17 +756,16 @@ async function runSmoke(w: BrowserWindow, errors: string[]): Promise<void> {
   report.dom = dom
 
   // ---- 断言 ----
-  if (red < 3 || yellow < 3 || green < 3)
-    failures.push(`交通灯像素不足 red=${red} yellow=${yellow} green=${green}`)
   if (lightStats.mean < 0.55) failures.push('浅色界面整体偏暗')
   if (darkStats.mean > 0.28) failures.push('深色界面整体偏亮')
   if (!(lightStats.mean > darkStats.mean + 0.15))
     failures.push('浅深色亮度差不足，主题切换未生效')
   if (lightStats.variance < 0.002) failures.push('画面方差过低，疑似空白')
   if (dom.root !== true) failures.push('root 未渲染')
-  if (dom.trafficLights !== 3) failures.push(`交通灯数量错误: ${dom.trafficLights}`)
-  if (dom.closeBtn !== true) failures.push('关闭按钮缺失')
-  if (dom.titlebarH !== 44) failures.push(`标题栏高度错误: ${dom.titlebarH}`)
+  if (dom.winMinBtn !== true || dom.winMaxBtn !== true || dom.winCloseBtn !== true)
+    failures.push('Windows 窗口按钮缺失')
+  if (dom.winCloseX < 1100) failures.push(`关闭按钮不在右上角: x=${dom.winCloseX}`)
+  if (dom.titlebarH !== 32) failures.push(`标题栏高度错误: ${dom.titlebarH}`)
   if (!(dom.sidebarW >= 240 && dom.sidebarW <= 300))
     failures.push(`侧边栏宽度异常: ${dom.sidebarW}`)
   if (!(dom.inspectorW >= 260 && dom.inspectorW <= 340))
@@ -850,6 +888,12 @@ async function runSmoke(w: BrowserWindow, errors: string[]): Promise<void> {
   // 对话增强断言
   if (dom.exportMdBtn !== true || dom.exportJsonBtn !== true)
     failures.push('导出按钮缺失')
+  if (dom.exportUiDone !== true) failures.push('导出按钮点击无反馈')
+  if (dom.collapseWorks !== true) failures.push('检查器折叠失败（可能崩溃）')
+  if (dom.expandWorks !== true) failures.push('检查器展开失败')
+  if (dom.modelMenuItems < 3) failures.push(`模型菜单条目过少: ${dom.modelMenuItems}`)
+  if (String(dom.modelPillAfterSwitch) === String(dom.modelPillRestored))
+    failures.push('模型切换未生效')
   // Token 统计断言
   const usageMeta = String(dom.usageMeta)
   if (!usageMeta.includes('tokens') || !usageMeta.includes('耗时') || !usageMeta.includes('≈¥'))

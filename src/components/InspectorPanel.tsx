@@ -78,21 +78,7 @@ export default function InspectorPanel({
     setTimeout(() => setConvSysSaved(false), 2000)
   }
 
-  if (!open) {
-    return (
-      <aside className="glass relative z-10 flex w-[300px] shrink-0 flex-col items-center border-l border-black/[0.06] pt-3 dark:border-white/[0.08]">
-        <button
-          onClick={() => setOpen(true)}
-          className="flex h-7 w-7 items-center justify-center rounded-lg text-black/45 hover:bg-black/[0.05] dark:text-white/50 dark:hover:bg-white/[0.08]"
-        >
-          <PanelRightClose size={15} strokeWidth={2} className="rotate-180" />
-        </button>
-      </aside>
-    )
-  }
-
-  const empty = EMPTY[tab]
-
+  // ⚠️ 所有 hooks 必须在 early return 之前：折叠切换改变 hooks 顺序会导致 React 崩溃（黑屏）
   const allRefs = useMemo<SearchRef[]>(() => {
     const map = new Map<string, SearchRef>()
     for (const m of messages) {
@@ -107,15 +93,43 @@ export default function InspectorPanel({
 
   const doExport = async (format: 'md' | 'json'): Promise<void> => {
     if (!conversation) return
-    const r = await window.aurora.conversations.export(conversation.id, format)
-    if (r.path) {
-      setExported(r.path)
+    try {
+      const r = await window.aurora.conversations.export(
+        conversation.id,
+        format,
+      )
+      if (r.path) {
+        setExported(r.path)
+        setTimeout(() => setExported(null), 4000)
+      }
+    } catch (err) {
+      setExported(`导出失败：${String(err)}`)
       setTimeout(() => setExported(null), 4000)
     }
   }
 
+  if (!open) {
+    return (
+      <aside className="glass relative z-10 flex w-10 shrink-0 flex-col items-center border-l border-black/[0.06] pt-2 dark:border-white/[0.08]">
+        <button
+          aria-label="展开面板"
+          onClick={() => setOpen(true)}
+          title="展开面板"
+          className="flex h-7 w-7 items-center justify-center rounded-lg text-black/45 hover:bg-black/[0.05] dark:text-white/50 dark:hover:bg-white/[0.08]"
+        >
+          <PanelRightClose size={15} strokeWidth={2} className="rotate-180" />
+        </button>
+      </aside>
+    )
+  }
+
+  const empty = EMPTY[tab]
+
   return (
-    <aside className="glass relative z-10 flex w-[300px] shrink-0 flex-col border-l border-black/[0.06] dark:border-white/[0.08]">
+    <aside
+      data-inspector-open
+      className="glass relative z-10 flex w-[300px] shrink-0 flex-col border-l border-black/[0.06] dark:border-white/[0.08]"
+    >
       <div className="flex items-center gap-1 border-b border-black/[0.05] px-3 pt-3 pb-1.5 dark:border-white/[0.07]">
         {TABS.map((t) => (
           <button
@@ -132,9 +146,27 @@ export default function InspectorPanel({
           </button>
         ))}
         <button
+          data-export-md
+          title="导出 Markdown"
+          disabled={!conversation}
+          onClick={() => void doExport('md')}
+          className="ml-auto flex h-7 w-7 items-center justify-center rounded-lg text-black/45 transition-colors hover:bg-black/[0.05] disabled:opacity-30 dark:text-white/50 dark:hover:bg-white/[0.08]"
+        >
+          <FileText size={14} strokeWidth={2} />
+        </button>
+        <button
+          data-export-json
+          title="导出 JSON"
+          disabled={!conversation}
+          onClick={() => void doExport('json')}
+          className="flex h-7 w-7 items-center justify-center rounded-lg text-black/45 transition-colors hover:bg-black/[0.05] disabled:opacity-30 dark:text-white/50 dark:hover:bg-white/[0.08]"
+        >
+          <FileJson size={14} strokeWidth={2} />
+        </button>
+        <button
           onClick={() => setOpen(false)}
           title="收起面板"
-          className="ml-auto flex h-7 w-7 items-center justify-center rounded-lg text-black/45 transition-colors hover:bg-black/[0.05] dark:text-white/50 dark:hover:bg-white/[0.08]"
+          className="flex h-7 w-7 items-center justify-center rounded-lg text-black/45 transition-colors hover:bg-black/[0.05] dark:text-white/50 dark:hover:bg-white/[0.08]"
         >
           <PanelRightClose size={15} strokeWidth={2} />
         </button>

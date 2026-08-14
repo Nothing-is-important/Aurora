@@ -419,6 +419,7 @@ export default function ChatArea({ chat, settingsOpen, onSmokePhase2Done }: Chat
             {models.map((m) => (
               <button
                 key={m.id}
+                data-model-item
                 onClick={() => {
                   setModelId(m.id)
                   setMenuOpen(false)
