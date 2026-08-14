@@ -1,5 +1,16 @@
 # Aurora 变更日志
 
+## 迭代 5/10 · 工具链基础 ✅（阶段二启动）
+
+- **Agent 工具循环**（主进程）：请求携带 OpenAI tools 定义，流式累积 tool_calls → 执行 → 结果以 tool 角色回传 → 多轮直到 stop（上限 6 轮）
+- **工具执行器**：`read_file` / `write_file` / `list_dir`，全部限制在**工作目录沙箱**（`userData/workspace`，路径解析防 `../` 越界），读文件 200KB 上限、输出截断
+- **步骤可视化**：`chat:tool` 事件推送步骤状态（running/done/error），消息内毛玻璃步骤卡片（图标/名称/参数摘要/状态动画），检查器「工具调用」tab 汇总展示参数与结果
+- **持久化**：tool_steps_json 列自动迁移，重启恢复
+- Mock 增加工具演示流（写文件 → 第二轮确认），冒烟实现**真实端到端**：请求写 hello.py → 工具真实落盘工作目录 → 内容逐字断言 → 步骤卡片/DB/检查器全链路验证
+
+### 迭代 5 审计结果
+- hello.py 真实写入且内容 `print("hello from aurora")` ✅，DB 步骤落盘 ✅，卡片与检查器渲染 ✅
+
 ## 迭代 4/10 · 提示词系统 ✅（完成）
 
 - **系统提示词注入**：发送时自动注入，会话级 > 全局优先级；conversations 表新增 system_prompt 列（自动迁移）
