@@ -89,6 +89,14 @@ export interface McpServerConfig {
   enabled: boolean
 }
 
+export interface KbRow {
+  id: string
+  name: string
+  path: string
+  fileCount: number
+  createdAt: number
+}
+
 export interface AuroraApi {
   smoke: boolean
   window: {
@@ -156,6 +164,12 @@ export interface AuroraApi {
       servers: McpServerConfig[],
     ) => Promise<{ connected: string[]; errors: string[] }>
   }
+  kb: {
+    list: () => Promise<KbRow[]>
+    addFolder: () => Promise<KbRow | null>
+    remove: (id: string) => Promise<boolean>
+    rebuild: (id: string) => Promise<KbRow | null>
+  }
   chat: {
     start: (req: ChatStartRequest) => void
     stop: (requestId: string) => void
@@ -175,6 +189,7 @@ export interface AuroraApi {
   smokeNotifyShellVerified: (p: { done: boolean; shellOk: boolean }) => void
   smokeNotifyNetVerified: (p: { done: boolean; refsOk: boolean }) => void
   smokeNotifyMcpVerified: (p: { done: boolean; mcpOk: boolean }) => void
+  smokeNotifyKbVerified: (p: { done: boolean; refsOk: boolean }) => void
   smokeNotifyStopVerified: (p: { stoppedEarly: boolean; errored: boolean }) => void
   smokeNotifyConvVerified: (p: {
     listCount: number

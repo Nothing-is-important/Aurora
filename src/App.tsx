@@ -244,6 +244,7 @@ function AppInner() {
 
   // ---- 冒烟第十阶段：MCP Agent 端到端 ----
   const phase10 = useRef(false)
+  const [mcpDone, setMcpDone] = useState(false)
   useEffect(() => {
     if (!window.aurora.smoke || !netDone || phase10.current) return
     phase10.current = true
@@ -262,8 +263,30 @@ function AppInner() {
         mcpSteps.length > 0 &&
         mcpSteps.some((s) => s.resultSummary.includes('aurora-mcp-ok'))
       window.aurora.smokeNotifyMcpVerified({ done: ok, mcpOk })
+      setMcpDone(true)
     })()
   }, [netDone, chat])
+
+  // ---- 冒烟第十一阶段：知识库检索端到端 ----
+  const phase11 = useRef(false)
+  useEffect(() => {
+    if (!window.aurora.smoke || !mcpDone || phase11.current) return
+    phase11.current = true
+    void (async () => {
+      chat.send('请检索知识库中关于引用溯源的内容')
+      const ok = await waitFor(
+        () =>
+          streamingAppRef.current === null &&
+          messagesRef.current.length === 16,
+        30000,
+      )
+      const kbSteps = messagesRef.current.flatMap((m) =>
+        (m.toolSteps ?? []).filter((s) => s.name === 'search_knowledge'),
+      )
+      const refs = kbSteps.flatMap((s) => s.refs ?? [])
+      window.aurora.smokeNotifyKbVerified({ done: ok, refsOk: refs.length >= 1 })
+    })()
+  }, [mcpDone, chat])
 
   const handleSelect = useCallback((id: string) => {
     setActiveId(id)

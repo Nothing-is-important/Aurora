@@ -91,6 +91,14 @@ export interface McpServerConfig {
   enabled: boolean
 }
 
+export interface KbRow {
+  id: string
+  name: string
+  path: string
+  fileCount: number
+  createdAt: number
+}
+
 function on<T>(channel: string, cb: (payload: T) => void): () => void {
   const listener = (_e: unknown, payload: T): void => cb(payload)
   ipcRenderer.on(channel, listener)
@@ -189,6 +197,13 @@ const api = {
     ): Promise<{ connected: string[]; errors: string[] }> =>
       ipcRenderer.invoke('mcp:configure', servers),
   },
+  kb: {
+    list: (): Promise<KbRow[]> => ipcRenderer.invoke('kb:list'),
+    addFolder: (): Promise<KbRow | null> => ipcRenderer.invoke('kb:addFolder'),
+    remove: (id: string): Promise<boolean> => ipcRenderer.invoke('kb:remove', id),
+    rebuild: (id: string): Promise<KbRow | null> =>
+      ipcRenderer.invoke('kb:rebuild', id),
+  },
   chat: {
     start: (req: ChatStartRequest): void => ipcRenderer.send('chat:start', req),
     stop: (requestId: string): void =>
@@ -217,6 +232,8 @@ const api = {
     ipcRenderer.send('smoke:net-verified', p),
   smokeNotifyMcpVerified: (p: { done: boolean; mcpOk: boolean }): void =>
     ipcRenderer.send('smoke:mcp-verified', p),
+  smokeNotifyKbVerified: (p: { done: boolean; refsOk: boolean }): void =>
+    ipcRenderer.send('smoke:kb-verified', p),
   smokeNotifyStopVerified: (p: { stoppedEarly: boolean; errored: boolean }): void =>
     ipcRenderer.send('smoke:stop-verified', p),
   smokeNotifyConvVerified: (p: {

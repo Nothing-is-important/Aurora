@@ -316,14 +316,23 @@ async function mockCallOnce(
   const wantsSearchDemo = userText.includes('搜索')
   const wantsFetchDemo = userText.includes('抓取')
   const wantsMcpDemo = userText.includes('MCP')
+  const wantsKbDemo = userText.includes('知识库')
   const wantsToolDemo =
-    wantsFileDemo || wantsShellDemo || wantsPythonDemo || wantsSearchDemo || wantsFetchDemo || wantsMcpDemo
+    wantsFileDemo || wantsShellDemo || wantsPythonDemo || wantsSearchDemo || wantsFetchDemo || wantsMcpDemo || wantsKbDemo
 
   if (wantsToolDemo && !hasToolResult) {
     // 第一轮：演示工具调用
     let toolCall: ToolCall
     let reasoning: string
-    if (wantsMcpDemo) {
+    if (wantsKbDemo) {
+      toolCall = {
+        id: 'call_mock_kb',
+        name: 'search_knowledge',
+        argsStr: JSON.stringify({ query: '知识库 检索', top_k: 5 }),
+      }
+      reasoning =
+        '用户想检索本地知识库。我将使用 search_knowledge 工具查询相关内容，并附上引用来源。'
+    } else if (wantsMcpDemo) {
       toolCall = {
         id: 'call_mock_mcp',
         name: 'mcp__mock_server__echo',

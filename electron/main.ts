@@ -33,6 +33,7 @@ import {
 import { registerChatIpc, getSmokeChatRequests } from './chat'
 import { isShellAllowed, runPython } from './tools'
 import { mcpManager } from './mcp'
+import { kbManager } from './kb'
 import { spawnSync } from 'child_process'
 
 const SMOKE = process.env.SMOKE === '1'
@@ -363,6 +364,25 @@ async function runSmoke(w: BrowserWindow, errors: string[]): Promise<void> {
     report.mcpEchoResult = echo.ok ? echo.result : `ERR: ${echo.error}`
   }
 
+  // 知识库：真实建库与 BM25 检索验证
+  const kbDir = path.join(app.getPath('userData'), 'kb-smoke')
+  fs.mkdirSync(kbDir, { recursive: true })
+  fs.writeFileSync(
+    path.join(kbDir, 'aurora-notes.md'),
+    '# Aurora 笔记\n\nAurora 是苹果风格的 DeepSeek 桌面工作台，支持流式对话、工具调用与知识库检索。\n',
+    'utf-8',
+  )
+  fs.writeFileSync(
+    path.join(kbDir, 'meeting.md'),
+    '# 会议纪要\n\n本周讨论了知识库检索的引用溯源方案，确定使用本地 BM25 索引，文档不出本机。\n',
+    'utf-8',
+  )
+  const kbRow = await kbManager.addFolder(kbDir)
+  report.kbFiles = kbRow.fileCount
+  const kbSearch = kbManager.search('知识库 检索', 5)
+  report.kbSearchHits = kbSearch.refs.length
+  report.kbSearchTitle = kbSearch.refs[0]?.title ?? ''
+
   // 等待渲染层完成三阶段验证：① Mock 完整流式 ② 中途停止截断 ③ 会话切换/持久化
   let stopVerified: { stoppedEarly: boolean; errored: boolean } | null = null
   ipcMain.on('smoke:stop-verified', (_e, p) => {
@@ -520,6 +540,22 @@ async function runSmoke(w: BrowserWindow, errors: string[]): Promise<void> {
   await Promise.race([mcpDone, new Promise((r) => setTimeout(r, 40000))])
   report.mcpVerified = mcpVerified
 
+  // 等待知识库 Agent 端到端验证
+  let kbVerified: { done: boolean; refsOk: boolean } | null = null
+  let kbResolve: (() => void) | null = null
+  const kbDone = new Promise<void>((resolve) => {
+    kbResolve = resolve
+  })
+  ipcMain.on('smoke:kb-verified', (_e, p) => {
+    kbVerified = p
+    if (kbResolve) {
+      kbResolve()
+      kbResolve = null
+    }
+  })
+  await Promise.race([kbDone, new Promise((r) => setTimeout(r, 40000))])
+  report.kbVerified = kbVerified
+
   // 浅色阶段
   nativeTheme.themeSource = 'light'
   await new Promise((r) => setTimeout(r, 1200))
@@ -569,7 +605,7 @@ async function runSmoke(w: BrowserWindow, errors: string[]): Promise<void> {
     failures.push(`检查器宽度异常: ${dom.inspectorW}`)
   if (dom.chatW < 600) failures.push(`对话区宽度异常: ${dom.chatW}`)
   if (dom.overflowX === true) failures.push('存在水平溢出')
-  if (dom.messages !== 14) failures.push(`冒烟消息数量错误: ${dom.messages}`)
+  if (dom.messages !== 16) failures.push(`冒烟消息数量错误: ${dom.messages}`)
   // 气泡宽度固定：应铺满消息容器（不随内容长度变化）
   if (dom.assistantBubbleW < 600)
     failures.push(`助手气泡未固定全宽: ${dom.assistantBubbleW}`)
@@ -718,7 +754,7 @@ async function runSmoke(w: BrowserWindow, errors: string[]): Promise<void> {
   if (!String(report.helloContent).includes('hello from aurora'))
     failures.push(`hello.py 内容异常: ${report.helloContent}`)
   if (report.toolStepsInDb !== true) failures.push('DB 中工具步骤未落盘')
-  if (dom.toolStepCards < 2) failures.push(`消息内工具步骤卡片不足: ${dom.toolStepCards}`)
+  if (dom.toolStepCards < 5) failures.push(`消息内工具步骤卡片不足: ${dom.toolStepCards}`)
   if (dom.inspectorToolStep !== true) failures.push('检查器工具 tab 步骤缺失')
   // 系统命令断言
   const shv = shellVerified as { done: boolean; shellOk: boolean } | null
@@ -733,8 +769,8 @@ async function runSmoke(w: BrowserWindow, errors: string[]): Promise<void> {
   if (!nv || nv.done !== true)
     failures.push('联网搜索端到端验证失败: ' + JSON.stringify(nv))
   if (nv && nv.refsOk !== true) failures.push('搜索引用数量不足 3')
-  if (dom.refCards < 3) failures.push(`消息内引用卡片不足: ${dom.refCards}`)
-  if (dom.inspectorRefs < 3) failures.push(`检查器引用 tab 不足: ${dom.inspectorRefs}`)
+  if (dom.refCards < 4) failures.push(`消息内引用卡片不足: ${dom.refCards}`)
+  if (dom.inspectorRefs < 4) failures.push(`检查器引用 tab 不足: ${dom.inspectorRefs}`)
   // MCP 断言
   const ms = report.mcpStatus as { connected?: string[]; errors?: string[] } | undefined
   if (!ms || !ms.connected || !ms.connected.includes('mock_server'))
@@ -746,6 +782,15 @@ async function runSmoke(w: BrowserWindow, errors: string[]): Promise<void> {
   if (!mcv || mcv.done !== true)
     failures.push('MCP Agent 端到端验证失败: ' + JSON.stringify(mcv))
   if (mcv && mcv.mcpOk !== true) failures.push('MCP 步骤结果未回显 aurora-mcp-ok')
+  // 知识库断言
+  if (report.kbFiles !== 2) failures.push(`知识库文件数异常: ${report.kbFiles}`)
+  if (Number(report.kbSearchHits) < 1) failures.push('知识库检索无命中')
+  if (!String(report.kbSearchTitle).includes('aurora') && !String(report.kbSearchTitle).includes('meeting'))
+    failures.push(`知识库检索标题异常: ${report.kbSearchTitle}`)
+  const kbv = kbVerified as { done: boolean; refsOk: boolean } | null
+  if (!kbv || kbv.done !== true)
+    failures.push('知识库 Agent 端到端验证失败: ' + JSON.stringify(kbv))
+  if (kbv && kbv.refsOk !== true) failures.push('知识库引用未渲染')
   if (dom.editStarted !== true || dom.editFlowDone !== true)
     failures.push('编辑重发流程未完成')
   if (dom.editMsgs !== 2) failures.push(`编辑后消息数错误: ${dom.editMsgs}`)
@@ -847,10 +892,31 @@ ipcMain.handle('clipboard:writeText', (_e, text: string) => {
 
 // ---- 打开外部链接 ----
 ipcMain.handle('app:openExternal', (_e, url: string) => {
-  if (SMOKE) return true // 冒烟不真打开浏览器
-  if (/^https?:\/\//i.test(url)) void shell.openExternal(url)
+  if (SMOKE) return true // 冒烟不真打开
+  if (/^https?:\/\//i.test(url)) {
+    void shell.openExternal(url)
+  } else if (url.startsWith('file:///')) {
+    void shell.openPath(decodeURI(url.slice(8)))
+  }
   return true
 })
+
+// ---- 知识库 ----
+ipcMain.handle('kb:list', () => kbManager.list())
+ipcMain.handle('kb:addFolder', async () => {
+  if (!win) return null
+  const res = await dialog.showOpenDialog(win, {
+    title: '选择知识库文件夹',
+    properties: ['openDirectory'],
+  })
+  if (res.canceled || !res.filePaths[0]) return null
+  return await kbManager.addFolder(res.filePaths[0])
+})
+ipcMain.handle('kb:remove', (_e, id: string) => {
+  void kbManager.remove(id)
+  return true
+})
+ipcMain.handle('kb:rebuild', (_e, id: string) => kbManager.rebuild(id))
 
 // ---- MCP ----
 ipcMain.handle('mcp:configure', async (_e, servers) => {
@@ -1011,6 +1077,8 @@ app.whenReady().then(async () => {
     bootLog('initDb failed: ' + String(err))
     throw err
   }
+  await kbManager.init()
+  bootLog('kb init ok')
   registerChatIpc(listModels)
   bootLog('chat ipc registered')
   // 恢复用户配置的 MCP 服务器（冒烟模式由 runSmoke 显式配置）

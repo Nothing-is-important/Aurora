@@ -1,16 +1,19 @@
 import { useEffect, useState } from 'react'
 import {
+  BookOpen,
   Check,
   Eye,
   EyeOff,
+  FolderPlus,
   Loader2,
   Plus,
   PlugZap,
+  RefreshCw,
   Server,
   Trash2,
   X,
 } from 'lucide-react'
-import type { ModelConfig, McpServerConfig } from '../lib/ipc'
+import type { ModelConfig, McpServerConfig, KbRow } from '../lib/ipc'
 
 interface SettingsModalProps {
   open: boolean
@@ -65,6 +68,11 @@ export default function SettingsModal({
   const [mcpName, setMcpName] = useState('')
   const [mcpCmd, setMcpCmd] = useState('')
   const [mcpArgs, setMcpArgs] = useState('')
+  const [kbList, setKbList] = useState<KbRow[]>([])
+
+  const loadKb = (): void => {
+    void window.aurora.kb.list().then(setKbList)
+  }
 
   const loadMcp = (): void => {
     void window.aurora.settings.get('mcpServers').then((v) => {
@@ -93,8 +101,14 @@ export default function SettingsModal({
         setWlSaved(false)
       })
       loadMcp()
+      loadKb()
     }
   }, [open])
+
+  const addKb = async (): Promise<void> => {
+    const row = await window.aurora.kb.addFolder()
+    if (row) loadKb()
+  }
 
   const applyMcp = async (list: McpServerConfig[]): Promise<void> => {
     setMcpServers(list)
@@ -442,6 +456,60 @@ export default function SettingsModal({
                       {mcpMsg}
                     </p>
                   )}
+                </div>
+              </div>
+
+              <div>
+                <label className={label}>知识库（本地索引，文档不出本机）</label>
+                <div className="space-y-1.5">
+                  {kbList.length === 0 && (
+                    <p className="rounded-lg bg-black/[0.03] px-3 py-2.5 text-[11.5px] text-black/40 dark:bg-white/[0.05] dark:text-white/40">
+                      暂无知识库。添加文件夹后，对话中可用「检索知识库」能力引用其中的文档。
+                    </p>
+                  )}
+                  {kbList.map((k) => (
+                    <div
+                      key={k.id}
+                      data-kb-row
+                      className="flex items-center gap-2 rounded-xl bg-black/[0.035] px-3 py-2 dark:bg-white/[0.05]"
+                    >
+                      <BookOpen size={13} strokeWidth={2} className="shrink-0 text-apple-purple" />
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-[12px] font-medium text-black/75 dark:text-white/80">
+                          {k.name}
+                        </span>
+                        <span className="block truncate text-[10.5px] text-black/35 dark:text-white/35">
+                          {k.fileCount} 个文件 · {k.path}
+                        </span>
+                      </span>
+                      <button
+                        title="重建索引"
+                        onClick={() =>
+                          void window.aurora.kb.rebuild(k.id).then(() => loadKb())
+                        }
+                        className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-black/35 transition-colors hover:bg-black/[0.06] hover:text-black/70 dark:text-white/35 dark:hover:bg-white/[0.1]"
+                      >
+                        <RefreshCw size={12} strokeWidth={2.2} />
+                      </button>
+                      <button
+                        title="移除知识库"
+                        onClick={() =>
+                          void window.aurora.kb.remove(k.id).then(() => loadKb())
+                        }
+                        className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-black/35 transition-colors hover:bg-apple-red/10 hover:text-apple-red dark:text-white/35"
+                      >
+                        <Trash2 size={12} strokeWidth={2.2} />
+                      </button>
+                    </div>
+                  ))}
+                  <button
+                    data-kb-add
+                    onClick={() => void addKb()}
+                    className="flex h-8 w-full items-center justify-center gap-1.5 rounded-lg bg-black/[0.04] text-[12px] font-medium text-black/60 transition-colors hover:bg-black/[0.07] dark:bg-white/[0.07] dark:text-white/65 dark:hover:bg-white/[0.11]"
+                  >
+                    <FolderPlus size={13} strokeWidth={2.2} />
+                    添加文件夹…
+                  </button>
                 </div>
               </div>
 

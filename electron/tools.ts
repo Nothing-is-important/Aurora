@@ -3,6 +3,7 @@ import * as path from 'path'
 import { exec } from 'child_process'
 import { app, dialog } from 'electron'
 import { getSetting, setSetting } from './db'
+import { kbManager } from './kb'
 
 let workspaceDir = ''
 
@@ -125,6 +126,21 @@ export const TOOL_DEFS = [
           url: { type: 'string', description: '要抓取的网页 URL' },
         },
         required: ['url'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'search_knowledge',
+      description: '检索本地知识库，返回相关文档片段与来源',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: '检索关键词或问题' },
+          top_k: { type: 'number', description: '返回片段数，默认 5' },
+        },
+        required: ['query'],
       },
     },
   },
@@ -446,6 +462,13 @@ export async function executeTool(
       const url = String(args.url ?? '').trim()
       if (!/^https?:\/\//i.test(url)) return { ok: false, error: 'URL 需以 http(s):// 开头' }
       return await fetchUrl(url)
+    }
+    if (name === 'search_knowledge') {
+      const query = String(args.query ?? '').trim()
+      if (!query) return { ok: false, error: '检索关键词为空' }
+      const topK = Math.min(20, Math.max(1, Number(args.top_k) || 5))
+      const r = kbManager.search(query, topK)
+      return { ok: true, result: r.text, refs: r.refs }
     }
     return { ok: false, error: `未知工具: ${name}` }
   } catch (err) {
