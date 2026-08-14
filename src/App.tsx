@@ -81,6 +81,7 @@ function AppInner() {
   // ---- 冒烟第三阶段：会话切换与持久化 ----
   const phase3 = useRef(false)
   const [phase2Done, setPhase2Done] = useState(false)
+  const [convDone, setConvDone] = useState(false)
 
   useEffect(() => {
     if (!window.aurora.smoke || !phase2Done || phase3.current) return
@@ -101,8 +102,42 @@ function AppInner() {
         emptyOk,
         restoredCount: messagesRef.current.length,
       })
+      setConvDone(true)
     })()
   }, [phase2Done])
+
+  // ---- 冒烟第五阶段：导出验证 ----
+  const phase5 = useRef(false)
+  useEffect(() => {
+    if (!window.aurora.smoke || !convDone || phase5.current) return
+    phase5.current = true
+    void (async () => {
+      const conv = (await window.aurora.conversations.list()).find((c) =>
+        c.title.startsWith('冒烟'),
+      )
+      if (!conv) {
+        window.aurora.smokeNotifyExportVerified({
+          mdOk: false,
+          jsonOk: false,
+          pathOk: false,
+        })
+        return
+      }
+      const md = await window.aurora.conversations.export(conv.id, 'md')
+      const j = await window.aurora.conversations.export(conv.id, 'json')
+      let jsonOk = false
+      try {
+        jsonOk = JSON.parse(j.content).messages.length === 4
+      } catch {
+        jsonOk = false
+      }
+      window.aurora.smokeNotifyExportVerified({
+        mdOk: md.content.includes('快速示例') && md.content.includes('## 用户'),
+        jsonOk,
+        pathOk: !!md.path && !!j.path,
+      })
+    })()
+  }, [convDone])
 
   const handleSelect = useCallback((id: string) => {
     setActiveId(id)
@@ -187,7 +222,10 @@ function AppInner() {
           settingsOpen={settingsOpen}
           onSmokePhase2Done={() => setPhase2Done(true)}
         />
-        <InspectorPanel />
+        <InspectorPanel
+          conversation={activeConv}
+          messageCount={chat.messages.length}
+        />
       </div>
 
       <SettingsModal

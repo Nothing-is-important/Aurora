@@ -133,7 +133,18 @@ const api = {
         error?: string
         createdAt: number
       }): Promise<boolean> => ipcRenderer.invoke('messages:upsert', m),
+      deleteFrom: (conversationId: string, fromId: string): Promise<boolean> =>
+        ipcRenderer.invoke('messages:deleteFrom', conversationId, fromId),
     },
+    export: (
+      convId: string,
+      format: 'md' | 'json',
+    ): Promise<{ path: string; content: string }> =>
+      ipcRenderer.invoke('conversation:export', convId, format),
+  },
+  clipboard: {
+    writeText: (text: string): Promise<boolean> =>
+      ipcRenderer.invoke('clipboard:writeText', text),
   },
   chat: {
     start: (req: ChatStartRequest): void => ipcRenderer.send('chat:start', req),
@@ -157,6 +168,11 @@ const api = {
     emptyOk: boolean
     restoredCount: number
   }): void => ipcRenderer.send('smoke:conv-verified', p),
+  smokeNotifyExportVerified: (p: {
+    mdOk: boolean
+    jsonOk: boolean
+    pathOk: boolean
+  }): void => ipcRenderer.send('smoke:export-verified', p),
 }
 
 contextBridge.exposeInMainWorld('aurora', api)

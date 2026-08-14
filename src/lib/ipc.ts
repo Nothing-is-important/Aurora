@@ -107,7 +107,15 @@ export interface AuroraApi {
         error?: string
         createdAt: number
       }) => Promise<boolean>
+      deleteFrom: (conversationId: string, fromId: string) => Promise<boolean>
     }
+    export: (
+      convId: string,
+      format: 'md' | 'json',
+    ) => Promise<{ path: string; content: string }>
+  }
+  clipboard: {
+    writeText: (text: string) => Promise<boolean>
   }
   chat: {
     start: (req: ChatStartRequest) => void
@@ -124,6 +132,11 @@ export interface AuroraApi {
     firstTitle: string
     emptyOk: boolean
     restoredCount: number
+  }) => void
+  smokeNotifyExportVerified: (p: {
+    mdOk: boolean
+    jsonOk: boolean
+    pathOk: boolean
   }) => void
 }
 

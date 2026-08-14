@@ -25,6 +25,8 @@ export interface ChatController {
   stop: () => void
   loadConversation: (conversationId: string) => Promise<void>
   clear: () => void
+  editMessage: (messageId: string, newText: string) => void
+  regenerate: (assistantId: string) => void
 }
 
 export interface UseChatOptions {
@@ -200,7 +202,13 @@ export function useChat(opts: UseChatOptions): ChatController {
   )
 
   const send = useCallback(
-    (text: string, forceModelId?: string, attachments?: PickedFile[]) => {
+    (
+      text: string,
+      forceModelId?: string,
+      attachments?: PickedFile[],
+      baseMessages?: ChatMessage[],
+      skipUserAppend = false,
+    ) => {
       if (streamingRef.current) return
       const mid = forceModelId ?? modelId
       const trimmed = text.trim()
@@ -220,7 +228,7 @@ export function useChat(opts: UseChatOptions): ChatController {
           convIdRef.current = convId
         }
         const requestId = crypto.randomUUID()
-        const apiMessages = messages
+        const apiMessages = (baseMessages ?? messages)
           .filter((m) => m.status !== 'error' && m.content !== '')
           .map((m) => ({ role: m.role, content: m.content }))
 
@@ -253,15 +261,19 @@ export function useChat(opts: UseChatOptions): ChatController {
         } else {
           userContent = userText
         }
-        apiMessages.push({ role: 'user', content: userContent } as never)
-
-        const userMsg: ChatMessage = {
-          id: crypto.randomUUID(),
-          role: 'user',
-          content: displayText,
-          reasoning: '',
-          status: 'done',
+        if (!skipUserAppend) {
+          apiMessages.push({ role: 'user', content: userContent } as never)
         }
+
+        const userMsg: ChatMessage | null = skipUserAppend
+          ? null
+          : {
+              id: crypto.randomUUID(),
+              role: 'user',
+              content: displayText,
+              reasoning: '',
+              status: 'done',
+            }
         const asstMsg: ChatMessage = {
           id: requestId,
           role: 'assistant',
@@ -270,15 +282,17 @@ export function useChat(opts: UseChatOptions): ChatController {
           status: 'streaming',
         }
         // 先落库再启动流，切换会话也能恢复
-        await window.aurora.conversations.messages.upsert({
-          id: userMsg.id,
-          conversationId: convId,
-          role: 'user',
-          content: userMsg.content,
-          reasoning: '',
-          status: 'done',
-          createdAt: Date.now(),
-        })
+        if (userMsg) {
+          await window.aurora.conversations.messages.upsert({
+            id: userMsg.id,
+            conversationId: convId,
+            role: 'user',
+            content: userMsg.content,
+            reasoning: '',
+            status: 'done',
+            createdAt: Date.now(),
+          })
+        }
         await window.aurora.conversations.messages.upsert({
           id: asstMsg.id,
           conversationId: convId,
@@ -289,12 +303,14 @@ export function useChat(opts: UseChatOptions): ChatController {
           createdAt: Date.now() + 1,
         })
         smokeLog('append', {
-          ids: [userMsg.id.slice(0, 6), asstMsg.id.slice(0, 6)],
+          ids: [userMsg?.id.slice(0, 6) ?? 'skip', asstMsg.id.slice(0, 6)],
           convId,
         })
         // 使在途的 load 失效（它们可能读到了不完整的落库状态）
         loadGenRef.current++
-        setMessages((prev) => [...prev, userMsg, asstMsg])
+        setMessages((prev) =>
+          userMsg ? [...prev, userMsg, asstMsg] : [...prev, asstMsg],
+        )
         streamingRef.current = requestId
         setStreamingId(requestId)
         optsRef.current.onActivity()
@@ -326,6 +342,44 @@ export function useChat(opts: UseChatOptions): ChatController {
     if (id) window.aurora.chat.stop(id)
   }, [])
 
+  /** 编辑某条用户消息：截断其后所有消息（分支），用新文本重发 */
+  const editMessage = useCallback(
+    (messageId: string, newText: string) => {
+      if (streamingRef.current) return
+      const trimmed = newText.trim()
+      if (!trimmed) return
+      const idx = messages.findIndex((m) => m.id === messageId)
+      if (idx < 0) return
+      const sliced = messages.slice(0, idx)
+      const convId = convIdRef.current
+      if (convId) {
+        void window.aurora.conversations.messages.deleteFrom(convId, messageId)
+      }
+      setMessages(sliced)
+      send(trimmed, undefined, undefined, sliced)
+    },
+    [messages, send],
+  )
+
+  /** 重新生成助手消息：截断该消息及其后，重发前一条用户消息 */
+  const regenerate = useCallback(
+    (assistantId: string) => {
+      if (streamingRef.current) return
+      const idx = messages.findIndex((m) => m.id === assistantId)
+      if (idx < 0) return
+      const sliced = messages.slice(0, idx)
+      const lastUser = [...sliced].reverse().find((m) => m.role === 'user')
+      if (!lastUser) return
+      const convId = convIdRef.current
+      if (convId) {
+        void window.aurora.conversations.messages.deleteFrom(convId, assistantId)
+      }
+      setMessages(sliced)
+      send(lastUser.content, undefined, undefined, sliced, true)
+    },
+    [messages, send],
+  )
+
   const clear = useCallback(() => {
     setMessages([])
   }, [])
@@ -343,5 +397,7 @@ export function useChat(opts: UseChatOptions): ChatController {
     stop,
     loadConversation,
     clear,
+    editMessage,
+    regenerate,
   }
 }

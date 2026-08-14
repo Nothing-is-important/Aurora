@@ -1,6 +1,7 @@
 import {
   app,
   BrowserWindow,
+  clipboard,
   dialog,
   globalShortcut,
   ipcMain,
@@ -13,6 +14,7 @@ import {
   closeDb,
   createConversation,
   deleteConversation,
+  deleteMessagesFrom,
   deleteModel,
   getSetting,
   initDb,
@@ -232,6 +234,56 @@ const DOM_AUDIT = `
   await sleep(300)
   out.paletteClosed = !document.querySelector('[data-command-palette]')
 
+  // 检查器信息 tab 与导出按钮
+  const infoTab = Array.from(document.querySelectorAll('aside button')).find((b) =>
+    (b.textContent || '').includes('信息')
+  )
+  if (infoTab) infoTab.click()
+  await sleep(300)
+  out.exportMdBtn = !!document.querySelector('[data-export-md]')
+  out.exportJsonBtn = !!document.querySelector('[data-export-json]')
+
+  // 复制消息（主进程稍后验证剪贴板）
+  const copyBtn = document.querySelector('button[aria-label="复制消息"]')
+  if (copyBtn) copyBtn.click()
+  await sleep(400)
+
+  const waitFor = async (cond, timeout) => {
+    const t0 = Date.now()
+    while (Date.now() - t0 < timeout) {
+      if (cond()) return true
+      await sleep(250)
+    }
+    return false
+  }
+
+  // 编辑消息并重发（分支截断）
+  const editBtn = document.querySelector('button[aria-label="编辑消息"]')
+  if (editBtn) editBtn.click()
+  await sleep(300)
+  const editInput = document.querySelector('[data-msg-edit-input]')
+  if (editInput) {
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set
+    setter.call(editInput, '编辑后的冒烟消息')
+    editInput.dispatchEvent(new Event('input', { bubbles: true }))
+  }
+  const editSave = document.querySelector('[data-msg-edit-save]')
+  if (editSave) editSave.click()
+  out.editStarted = await waitFor(() => !!document.querySelector('button[aria-label="停止"]'), 8000)
+  out.editFlowDone = await waitFor(() => !document.querySelector('button[aria-label="停止"]'), 20000)
+  await sleep(300)
+  out.editMsgs = document.querySelectorAll('[data-role]').length
+  out.editNoError = !document.querySelector('[data-error]')
+
+  // 重新生成助手回复
+  const regenBtn = document.querySelector('button[aria-label="重新生成"]')
+  if (regenBtn) regenBtn.click()
+  out.regenStarted = await waitFor(() => !!document.querySelector('button[aria-label="停止"]'), 8000)
+  out.regenFlowDone = await waitFor(() => !document.querySelector('button[aria-label="停止"]'), 20000)
+  await sleep(300)
+  out.regenMsgs = document.querySelectorAll('[data-role]').length
+  out.regenNoError = !document.querySelector('[data-error]')
+
   // Ctrl+N 新对话（清空消息区）
   window.dispatchEvent(new KeyboardEvent('keydown', { key: 'n', ctrlKey: true, bubbles: true }))
   await sleep(400)
@@ -276,6 +328,22 @@ async function runSmoke(w: BrowserWindow, errors: string[]): Promise<void> {
   bootLog('conv-verified: ' + JSON.stringify(convVerified))
   report.stopVerified = stopVerified
   report.convVerified = convVerified
+
+  // 等待导出验证
+  let exportVerified: { mdOk: boolean; jsonOk: boolean; pathOk: boolean } | null = null
+  let exportResolve: (() => void) | null = null
+  const exportDone = new Promise<void>((resolve) => {
+    exportResolve = resolve
+  })
+  ipcMain.on('smoke:export-verified', (_e, p) => {
+    exportVerified = p
+    if (exportResolve) {
+      exportResolve()
+      exportResolve = null
+    }
+  })
+  await Promise.race([exportDone, new Promise((r) => setTimeout(r, 40000))])
+  report.exportVerified = exportVerified
 
   // 浅色阶段
   nativeTheme.themeSource = 'light'
@@ -360,13 +428,16 @@ async function runSmoke(w: BrowserWindow, errors: string[]): Promise<void> {
     if (cv.restoredCount !== 4)
       failures.push(`切回后消息恢复数量错误: ${cv.restoredCount}`)
   }
-  // 数据库落盘断言
+  // 数据库落盘断言（编辑/重生成后：2 条消息）
   const convs = listConversations()
   if (convs.length !== 2) failures.push(`DB 会话数错误: ${convs.length}`)
   const firstConv = convs.find((c) => c.title.startsWith('冒烟测试'))
   if (firstConv) {
     const msgs = listMessages(firstConv.id)
-    if (msgs.length !== 4) failures.push(`DB 消息数错误: ${msgs.length}`)
+    if (msgs.length !== 2)
+      failures.push(`DB 消息数错误(编辑后应为 2): ${msgs.length}`)
+    const hasEdited = msgs.some((m) => m.content.includes('编辑后的冒烟消息'))
+    if (!hasEdited) failures.push('DB 中未找到编辑后的消息')
     const hasCode = msgs.some((m) => m.content.includes('快速示例'))
     if (!hasCode) failures.push('DB 中未找到流式内容')
     const hasReasoning = msgs.some((m) => m.reasoning.length > 10)
@@ -374,6 +445,11 @@ async function runSmoke(w: BrowserWindow, errors: string[]): Promise<void> {
   } else {
     failures.push('DB 中未找到冒烟会话')
   }
+  // 剪贴板验证（复制消息按钮）
+  const clip = clipboard.readText()
+  report.clipboard = clip.slice(0, 30)
+  if (clip !== '冒烟测试：请演示一个包含代码、公式和列表的综合示例')
+    failures.push(`剪贴板内容不符: ${clip.slice(0, 30)}`)
   if (dom.reasoning !== true) failures.push('思维链面板缺失')
   if (dom.codeBlock !== true) failures.push('代码块缺失')
   if (dom.hljs !== true) failures.push('语法高亮未应用')
@@ -398,6 +474,18 @@ async function runSmoke(w: BrowserWindow, errors: string[]): Promise<void> {
   )
     failures.push('设置表单字段缺失')
   if (dom.settingsClosed !== true) failures.push('设置弹窗未关闭')
+  // 导出验证
+  const ev = exportVerified as {
+    mdOk: boolean
+    jsonOk: boolean
+    pathOk: boolean
+  } | null
+  if (!ev) failures.push('导出验证未在超时内完成')
+  else {
+    if (ev.mdOk !== true) failures.push('Markdown 导出内容异常')
+    if (ev.jsonOk !== true) failures.push('JSON 导出内容异常')
+    if (ev.pathOk !== true) failures.push('导出路径缺失')
+  }
   // 附件按钮
   if (dom.attachBtn !== true) failures.push('附件按钮缺失')
   // 命令面板与快捷键断言
@@ -408,6 +496,17 @@ async function runSmoke(w: BrowserWindow, errors: string[]): Promise<void> {
   if (dom.paletteClosed !== true) failures.push('命令面板 Esc 未关闭')
   if (dom.ctrlNCleared !== true) failures.push('Ctrl+N 未清空消息')
   if (dom.ctrlNActiveNull !== true) failures.push('Ctrl+N 后激活会话未清除')
+  // 对话增强断言
+  if (dom.exportMdBtn !== true || dom.exportJsonBtn !== true)
+    failures.push('导出按钮缺失')
+  if (dom.editStarted !== true || dom.editFlowDone !== true)
+    failures.push('编辑重发流程未完成')
+  if (dom.editMsgs !== 2) failures.push(`编辑后消息数错误: ${dom.editMsgs}`)
+  if (dom.editNoError !== true) failures.push('编辑重发出现错误')
+  if (dom.regenStarted !== true || dom.regenFlowDone !== true)
+    failures.push('重新生成流程未完成')
+  if (dom.regenMsgs !== 2) failures.push(`重新生成后消息数错误: ${dom.regenMsgs}`)
+  if (dom.regenNoError !== true) failures.push('重新生成出现错误')
   if (report.globalShortcut !== true)
     failures.push(`全局快捷键未注册: ${report.globalShortcut}`)
   if (errors.length > 0) failures.push('控制台错误: ' + errors.join(' | '))
@@ -481,6 +580,78 @@ ipcMain.handle('messages:upsert', (_e, m) => {
   upsertMessage(m)
   return true
 })
+ipcMain.handle('messages:deleteFrom', (_e, conversationId: string, fromId: string) => {
+  deleteMessagesFrom(conversationId, fromId)
+  return true
+})
+
+// ---- 剪贴板（走主进程，避免渲染层 clipboard 权限问题）----
+ipcMain.handle('clipboard:writeText', (_e, text: string) => {
+  clipboard.writeText(text)
+  return true
+})
+
+// ---- 会话导出 ----
+ipcMain.handle(
+  'conversation:export',
+  async (_e, convId: string, format: 'md' | 'json') => {
+    const conv = listConversations().find((c) => c.id === convId)
+    const msgs = listMessages(convId)
+    const title = conv?.title ?? '对话'
+    let content: string
+    let defaultName: string
+    if (format === 'json') {
+      content = JSON.stringify(
+        {
+          title,
+          exportedAt: new Date().toISOString(),
+          messages: msgs,
+        },
+        null,
+        2,
+      )
+      defaultName = `${title}.json`
+    } else {
+      const lines = [
+        `# ${title}`,
+        '',
+        `> 导出时间：${new Date().toLocaleString()}`,
+        '',
+      ]
+      for (const m of msgs) {
+        lines.push(`## ${m.role === 'user' ? '用户' : 'Aurora'}`)
+        if (m.reasoning) {
+          lines.push('', '<details><summary>思考过程</summary>', '')
+          lines.push(...m.reasoning.split('\n').map((l) => `> ${l}`))
+          lines.push('', '</details>')
+        }
+        lines.push('', m.content, '')
+      }
+      content = lines.join('\n')
+      defaultName = `${title}.md`
+    }
+    // 冒烟模式直接落盘返回内容，避免原生保存对话框
+    if (SMOKE) {
+      const dir = path.join(app.getPath('userData'), 'exports')
+      fs.mkdirSync(dir, { recursive: true })
+      const p = path.join(dir, defaultName)
+      fs.writeFileSync(p, content, 'utf-8')
+      return { path: p, content }
+    }
+    if (!win) return { path: '', content: '' }
+    const res = await dialog.showSaveDialog(win, {
+      title: '导出会话',
+      defaultPath: defaultName,
+      filters:
+        format === 'json'
+          ? [{ name: 'JSON', extensions: ['json'] }]
+          : [{ name: 'Markdown', extensions: ['md'] }],
+    })
+    if (res.canceled || !res.filePath) return { path: '', content: '' }
+    fs.writeFileSync(res.filePath, content, 'utf-8')
+    return { path: res.filePath, content: '' }
+  },
+)
 
 // ---- 文件选择 ----
 const IMAGE_EXT = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp']

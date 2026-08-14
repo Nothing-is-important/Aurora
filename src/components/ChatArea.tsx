@@ -3,11 +3,15 @@ import {
   AlertCircle,
   ArrowUp,
   Brain,
+  Check,
   ChevronDown,
   Code2,
+  Copy,
   FileText,
   Lightbulb,
   Paperclip,
+  Pencil,
+  RefreshCw,
   Sparkles,
   Square,
   X,
@@ -86,6 +90,38 @@ function formatSize(n: number): string {
   return `${(n / 1024 / 1024).toFixed(1)} MB`
 }
 
+function MsgToolbar({
+  children,
+}: {
+  children: React.ReactNode
+}) {
+  return (
+    <div className="no-scrollbar pointer-events-none absolute -bottom-3 right-0 z-10 flex items-center gap-0.5 opacity-0 transition-opacity duration-150 group-hover:opacity-100">
+      {children}
+    </div>
+  )
+}
+
+function ToolbarBtn({
+  label,
+  onClick,
+  children,
+}: {
+  label: string
+  onClick: () => void
+  children: React.ReactNode
+}) {
+  return (
+    <button
+      aria-label={label}
+      onClick={onClick}
+      className="pointer-events-auto flex h-6 items-center gap-1 rounded-full bg-white/90 px-2 text-[10.5px] font-medium text-black/55 shadow-soft backdrop-blur transition-colors hover:bg-white hover:text-black/80 dark:bg-[#2a2a33]/90 dark:text-white/60 dark:hover:bg-[#33333d] dark:hover:text-white/90"
+    >
+      {children}
+    </button>
+  )
+}
+
 interface ChatAreaProps {
   chat: ChatController
   settingsOpen: boolean
@@ -101,10 +137,15 @@ export default function ChatArea({ chat, settingsOpen, onSmokePhase2Done }: Chat
     streamingId,
     send,
     stop,
+    editMessage,
+    regenerate,
   } = chat
   const [input, setInput] = useState('')
   const [menuOpen, setMenuOpen] = useState(false)
   const [attachments, setAttachments] = useState<PickedFile[]>([])
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editDraft, setEditDraft] = useState('')
+  const [copiedId, setCopiedId] = useState<string | null>(null)
   const taRef = useRef<HTMLTextAreaElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
@@ -184,6 +225,18 @@ export default function ChatArea({ chat, settingsOpen, onSmokePhase2Done }: Chat
     setInput('')
     setAttachments([])
     if (taRef.current) taRef.current.style.height = 'auto'
+  }
+
+  const copyMessage = async (text: string, id: string): Promise<void> => {
+    await window.aurora.clipboard.writeText(text)
+    setCopiedId(id)
+    setTimeout(() => setCopiedId((c) => (c === id ? null : c)), 1500)
+  }
+
+  const commitEdit = (id: string): void => {
+    editMessage(id, editDraft)
+    setEditingId(null)
+    setEditDraft('')
   }
 
   return (
@@ -296,19 +349,109 @@ export default function ChatArea({ chat, settingsOpen, onSmokePhase2Done }: Chat
                 <div
                   key={m.id}
                   data-role="user"
-                  className="animate-slideUp flex justify-end"
+                  className="group relative animate-slideUp flex justify-end"
                 >
-                  <div className="max-w-[78%] select-text whitespace-pre-wrap break-words rounded-[22px] rounded-br-md bg-gradient-to-br from-[#0A84FF] to-[#3D9BFF] px-4 py-2.5 text-[14px] leading-relaxed text-white shadow-soft">
-                    {m.content}
-                  </div>
+                  {editingId === m.id ? (
+                    <div className="w-full max-w-[78%]">
+                      <textarea
+                        data-msg-edit-input
+                        autoFocus
+                        value={editDraft}
+                        onChange={(e) => setEditDraft(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' && !e.shiftKey) {
+                            e.preventDefault()
+                            commitEdit(m.id)
+                          }
+                          if (e.key === 'Escape') {
+                            setEditingId(null)
+                            setEditDraft('')
+                          }
+                        }}
+                        rows={Math.min(8, Math.max(2, editDraft.split('\n').length))}
+                        className="w-full resize-none select-text rounded-[22px] rounded-br-md bg-gradient-to-br from-[#0A84FF] to-[#3D9BFF] px-4 py-2.5 text-[14px] leading-relaxed text-white shadow-soft outline-none ring-2 ring-white/60"
+                      />
+                      <div className="mt-1.5 flex items-center gap-1.5">
+                        <button
+                          data-msg-edit-save
+                          onClick={() => commitEdit(m.id)}
+                          className="flex h-6 items-center gap-1 rounded-full bg-apple-blue px-2.5 text-[11px] font-medium text-white shadow-soft transition-transform active:scale-95"
+                        >
+                          <Check size={12} strokeWidth={2.6} /> 保存并重新发送
+                        </button>
+                        <button
+                          onClick={() => {
+                            setEditingId(null)
+                            setEditDraft('')
+                          }}
+                          className="flex h-6 items-center gap-1 rounded-full bg-black/[0.06] px-2.5 text-[11px] font-medium text-black/55 transition-colors hover:bg-black/[0.1] dark:bg-white/[0.09] dark:text-white/60"
+                        >
+                          <X size={12} strokeWidth={2.6} /> 取消
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="relative max-w-[78%]">
+                      <div className="select-text whitespace-pre-wrap break-words rounded-[22px] rounded-br-md bg-gradient-to-br from-[#0A84FF] to-[#3D9BFF] px-4 py-2.5 text-[14px] leading-relaxed text-white shadow-soft">
+                        {m.content}
+                      </div>
+                      {m.status !== 'streaming' && (
+                        <MsgToolbar>
+                          <ToolbarBtn
+                            label="编辑消息"
+                            onClick={() => {
+                              setEditingId(m.id)
+                              setEditDraft(m.content.replace(/\n\n📎.*$/s, ''))
+                            }}
+                          >
+                            <Pencil size={11} strokeWidth={2.4} />
+                            编辑
+                          </ToolbarBtn>
+                          <ToolbarBtn
+                            label="复制消息"
+                            onClick={() => void copyMessage(m.content, m.id)}
+                          >
+                            {copiedId === m.id ? (
+                              <Check size={11} strokeWidth={2.6} />
+                            ) : (
+                              <Copy size={11} strokeWidth={2.4} />
+                            )}
+                            {copiedId === m.id ? '已复制' : '复制'}
+                          </ToolbarBtn>
+                        </MsgToolbar>
+                      )}
+                    </div>
+                  )}
                 </div>
               ) : (
                 <div
                   key={m.id}
                   data-role="assistant"
-                  className="animate-slideUp flex justify-start"
+                  className="group relative animate-slideUp flex justify-start"
                 >
                   <AssistantBubble m={m} />
+                  {m.status !== 'streaming' && (
+                    <MsgToolbar>
+                      <ToolbarBtn
+                        label="重新生成"
+                        onClick={() => regenerate(m.id)}
+                      >
+                        <RefreshCw size={11} strokeWidth={2.4} />
+                        重新生成
+                      </ToolbarBtn>
+                      <ToolbarBtn
+                        label="复制回复"
+                        onClick={() => void copyMessage(m.content, m.id)}
+                      >
+                        {copiedId === m.id ? (
+                          <Check size={11} strokeWidth={2.6} />
+                        ) : (
+                          <Copy size={11} strokeWidth={2.4} />
+                        )}
+                        {copiedId === m.id ? '已复制' : '复制'}
+                      </ToolbarBtn>
+                    </MsgToolbar>
+                  )}
                 </div>
               ),
             )}
