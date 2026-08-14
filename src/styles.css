@@ -1,0 +1,136 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg-base: #ececf1;
+  --orb-blue: rgba(10, 132, 255, 0.16);
+  --orb-purple: rgba(191, 90, 242, 0.13);
+  --orb-orange: rgba(255, 159, 10, 0.1);
+}
+
+.dark {
+  --bg-base: #0d0d12;
+  --orb-blue: rgba(10, 132, 255, 0.22);
+  --orb-purple: rgba(191, 90, 242, 0.17);
+  --orb-orange: rgba(255, 159, 10, 0.12);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: Inter, -apple-system, BlinkMacSystemFont, 'SF Pro Text',
+    'SF Pro Display', 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  background: var(--bg-base);
+  color: #1d1d1f;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+  transition: background-color 0.3s ease;
+}
+
+.dark body {
+  color: #f5f5f7;
+}
+
+/* 背景氛围光斑 */
+.bg-orbs {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.bg-orbs::before,
+.bg-orbs::after {
+  content: '';
+  position: absolute;
+  border-radius: 9999px;
+  filter: blur(90px);
+}
+
+.bg-orbs::before {
+  width: 640px;
+  height: 640px;
+  left: -160px;
+  top: -220px;
+  background: var(--orb-blue);
+}
+
+.bg-orbs::after {
+  width: 560px;
+  height: 560px;
+  right: -140px;
+  bottom: -200px;
+  background: var(--orb-purple);
+}
+
+.bg-orbs .orb-orange {
+  position: absolute;
+  width: 420px;
+  height: 420px;
+  left: 38%;
+  top: 12%;
+  border-radius: 9999px;
+  background: var(--orb-orange);
+  filter: blur(100px);
+}
+
+/* 拖拽区域 */
+.drag {
+  -webkit-app-region: drag;
+}
+.no-drag {
+  -webkit-app-region: no-drag;
+}
+
+/* 滚动条 */
+::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(120, 120, 128, 0.28);
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(120, 120, 128, 0.45);
+  background-clip: content-box;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* 选中颜色 */
+::selection {
+  background: rgba(10, 132, 255, 0.28);
+}
+
+/* 玻璃材质 */
+.glass {
+  @apply backdrop-blur-2xl bg-white/60 dark:bg-[#17171d]/60 border border-black/[0.06] dark:border-white/[0.08];
+}
+
+.glass-strong {
+  @apply backdrop-blur-3xl bg-white/75 dark:bg-[#1c1c23]/75 border border-black/[0.07] dark:border-white/[0.1];
+}
+
+/* 交通灯 */
+.traffic-light {
+  @apply h-3 w-3 rounded-full flex items-center justify-center text-transparent
+    transition-all duration-150 ease-out cursor-default no-drag;
+}
+.traffic-group:hover .traffic-light {
+  @apply text-black/50;
+}
+.traffic-light:active {
+  filter: brightness(0.8);
+}
