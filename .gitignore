@@ -6,3 +6,9 @@ smoke.log
 *.log
 .DS_Store
 Thumbs.db
+
+# 本机专属文件（不进开源仓库）
+.env
+.env.*
+.npmrc
+docs/xiaohongshu-文案.md

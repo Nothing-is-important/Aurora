@@ -146,27 +146,9 @@ export default function InspectorPanel({
           </button>
         ))}
         <button
-          data-export-md
-          title="导出 Markdown"
-          disabled={!conversation}
-          onClick={() => void doExport('md')}
-          className="ml-auto flex h-7 w-7 items-center justify-center rounded-lg text-black/45 transition-colors hover:bg-black/[0.05] disabled:opacity-30 dark:text-white/50 dark:hover:bg-white/[0.08]"
-        >
-          <FileText size={14} strokeWidth={2} />
-        </button>
-        <button
-          data-export-json
-          title="导出 JSON"
-          disabled={!conversation}
-          onClick={() => void doExport('json')}
-          className="flex h-7 w-7 items-center justify-center rounded-lg text-black/45 transition-colors hover:bg-black/[0.05] disabled:opacity-30 dark:text-white/50 dark:hover:bg-white/[0.08]"
-        >
-          <FileJson size={14} strokeWidth={2} />
-        </button>
-        <button
           onClick={() => setOpen(false)}
           title="收起面板"
-          className="flex h-7 w-7 items-center justify-center rounded-lg text-black/45 transition-colors hover:bg-black/[0.05] dark:text-white/50 dark:hover:bg-white/[0.08]"
+          className="ml-auto flex h-7 w-7 items-center justify-center rounded-lg text-black/45 transition-colors hover:bg-black/[0.05] dark:text-white/50 dark:hover:bg-white/[0.08]"
         >
           <PanelRightClose size={15} strokeWidth={2} />
         </button>
