@@ -1,5 +1,16 @@
 # Aurora 变更日志
 
+## 迭代 8/10 · MCP 客户端 ✅（完成）
+
+- **MCP 客户端**（参考开源 DeepSeek Harness 的 MCP Server 能力，[社区版仓库](https://github.com/HenryZ838978/deepseek-harness)）：stdio JSON-RPC 传输——initialize 握手 → tools/list 注册 → tools/call 调用（60s 超时），请求-响应配对与错误处理
+- **Agent 循环接入**：MCP 工具以 `mcp__server__tool` 命名并入 tools 定义，模型可像内置工具一样发起调用
+- **设置配置区块**：MCP 服务器列表（启用开关/删除）+ 添加表单（名称/命令/参数），保存即重连，启动时从设置恢复
+- 内置 mock MCP 服务器（scripts/mock-mcp-server.mjs，打包时进 extraResources）供演示与全链路冒烟
+- 修复：工具名解析正则无法匹配带下划线的服务器 id（改用 lastIndexOf 分隔）
+
+### 迭代 8 审计结果
+- 真实子进程握手 ✅、工具注册 1 个 ✅、echo 返回 `echo: aurora-mcp-ok` ✅、Agent 端到端（模型发起→MCP 执行→结果回传）✅
+
 ## 迭代 7/10 · 联网能力 ✅（完成）
 
 - **web_search**：零配置联网搜索（cn.bing.com 结果页解析，标题/链接/摘要结构化，15s 超时），无需任何 API Key
