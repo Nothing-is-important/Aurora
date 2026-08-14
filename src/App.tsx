@@ -269,6 +269,7 @@ function AppInner() {
 
   // ---- 冒烟第十一阶段：知识库检索端到端 ----
   const phase11 = useRef(false)
+  const [kbDone, setKbDone] = useState(false)
   useEffect(() => {
     if (!window.aurora.smoke || !mcpDone || phase11.current) return
     phase11.current = true
@@ -285,8 +286,34 @@ function AppInner() {
       )
       const refs = kbSteps.flatMap((s) => s.refs ?? [])
       window.aurora.smokeNotifyKbVerified({ done: ok, refsOk: refs.length >= 1 })
+      setKbDone(true)
     })()
   }, [mcpDone, chat])
+
+  // ---- 冒烟第十二阶段：错误与重试 ----
+  const phase12 = useRef(false)
+  useEffect(() => {
+    if (!window.aurora.smoke || !kbDone || phase12.current) return
+    phase12.current = true
+    void (async () => {
+      chat.send('请触发模拟错误场景')
+      const ok = await waitFor(
+        () =>
+          streamingAppRef.current === null &&
+          messagesRef.current.length === 18,
+        30000,
+      )
+      const lastAsst = [...messagesRef.current]
+        .reverse()
+        .find((m) => m.role === 'assistant')
+      window.aurora.smokeNotifyErrorVerified({
+        done: ok,
+        errorShown: lastAsst?.status === 'error',
+        lastStatus: (lastAsst?.status ?? 'none') as string,
+        lastError: (lastAsst?.error ?? '') as string,
+      })
+    })()
+  }, [kbDone, chat])
 
   const handleSelect = useCallback((id: string) => {
     setActiveId(id)

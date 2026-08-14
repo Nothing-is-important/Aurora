@@ -234,6 +234,12 @@ const api = {
     ipcRenderer.send('smoke:mcp-verified', p),
   smokeNotifyKbVerified: (p: { done: boolean; refsOk: boolean }): void =>
     ipcRenderer.send('smoke:kb-verified', p),
+  smokeNotifyErrorVerified: (p: {
+    done: boolean
+    errorShown: boolean
+    lastStatus?: string
+    lastError?: string
+  }): void => ipcRenderer.send('smoke:error-verified', p),
   smokeNotifyStopVerified: (p: { stoppedEarly: boolean; errored: boolean }): void =>
     ipcRenderer.send('smoke:stop-verified', p),
   smokeNotifyConvVerified: (p: {

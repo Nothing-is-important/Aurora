@@ -126,13 +126,15 @@ export function useChat(opts: UseChatOptions): ChatController {
         })
       }),
       window.aurora.chat.onDone(({ requestId, durationMs, firstTokenMs }) => {
+        smokeLog('evt-done', { id: requestId.slice(0, 6) })
         setMessages((prev) => {
           const idx = prev.findIndex((m) => m.id === requestId)
           if (idx < 0) return prev
           const next = [...prev]
           next[idx] = {
             ...next[idx],
-            status: 'done',
+            // 错误场景：error 事件先于 done 到达，保持 error 状态
+            status: next[idx].status === 'error' ? 'error' : 'done',
             durationMs,
             firstTokenMs,
           }
@@ -150,6 +152,11 @@ export function useChat(opts: UseChatOptions): ChatController {
         }
       }),
       window.aurora.chat.onError(({ requestId, message, aborted }) => {
+        smokeLog('evt-error', {
+          id: requestId.slice(0, 6),
+          msg: message.slice(0, 24),
+          aborted,
+        })
         setMessages((prev) => {
           const idx = prev.findIndex((m) => m.id === requestId)
           if (idx < 0) return prev

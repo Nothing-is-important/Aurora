@@ -44,9 +44,11 @@ function Cursor() {
 function AssistantBubble({
   m,
   pricing,
+  onRetry,
 }: {
   m: ChatMessage
   pricing: ModelPricing
+  onRetry?: (id: string) => void
 }) {
   const reasoningActive = m.status === 'streaming' && m.content === ''
   const cost = estimateCost(m.usage, pricing)
@@ -160,7 +162,17 @@ function AssistantBubble({
           className="mt-2 flex items-start gap-2 rounded-xl bg-apple-red/10 px-3 py-2 text-[12.5px] text-apple-red"
         >
           <AlertCircle size={14} strokeWidth={2.2} className="mt-0.5 shrink-0" />
-          <span className="select-text break-all">{m.error}</span>
+          <span className="select-text min-w-0 flex-1 break-all">{m.error}</span>
+          {onRetry && (
+            <button
+              data-error-retry
+              onClick={() => onRetry(m.id)}
+              className="flex shrink-0 items-center gap-1 rounded-lg bg-apple-red/15 px-2 py-1 text-[11.5px] font-medium transition-colors hover:bg-apple-red/25"
+            >
+              <RefreshCw size={11} strokeWidth={2.4} />
+              重试
+            </button>
+          )}
         </div>
       )}
       {m.usage && m.status === 'done' && (
@@ -563,7 +575,7 @@ export default function ChatArea({ chat, settingsOpen, onSmokePhase2Done }: Chat
                   data-role="assistant"
                   className="group relative animate-slideUp flex justify-start"
                 >
-                  <AssistantBubble m={m} pricing={pricing} />
+                  <AssistantBubble m={m} pricing={pricing} onRetry={regenerate} />
                   {m.status !== 'streaming' && (
                     <MsgToolbar>
                       <ToolbarBtn

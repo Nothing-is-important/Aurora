@@ -6,6 +6,7 @@ import {
   globalShortcut,
   ipcMain,
   nativeTheme,
+  screen,
   shell,
 } from 'electron'
 import type { NativeImage } from 'electron'
@@ -53,6 +54,87 @@ function bootLog(msg: string): void {
 
 let win: BrowserWindow | null = null
 
+// ---- 窗口状态记忆 ----
+let boundsTimer: ReturnType<typeof setTimeout> | null = null
+
+function saveWindowBounds(): void {
+  if (!win || SMOKE) return
+  try {
+    setSetting(
+      'windowBounds',
+      JSON.stringify({ bounds: win.getBounds(), maximized: win.isMaximized() }),
+    )
+  } catch {
+    /* ignore */
+  }
+}
+
+function scheduleBoundsSave(): void {
+  if (SMOKE) return
+  if (boundsTimer) clearTimeout(boundsTimer)
+  boundsTimer = setTimeout(saveWindowBounds, 500)
+}
+
+function restoreWindowBounds(): void {
+  if (SMOKE) return
+  try {
+    const raw = getSetting('windowBounds')
+    if (!raw || !win) return
+    const s = JSON.parse(raw) as {
+      bounds?: { x: number; y: number; width: number; height: number }
+      maximized?: boolean
+    }
+    const b = s.bounds
+    if (b && typeof b.width === 'number' && b.width >= 800) {
+      const display = screen.getDisplayMatching(b)
+      const wa = display.workArea
+      const x = Math.min(Math.max(b.x, wa.x), wa.x + wa.width - 400)
+      const y = Math.min(Math.max(b.y, wa.y), wa.y + wa.height - 200)
+      win.setBounds({ x, y, width: b.width, height: b.height })
+      if (s.maximized) win.maximize()
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+// ---- 数据自动备份（每日一份，保留 7 份）----
+function doAutoBackup(): string | null {
+  try {
+    const dir = path.join(app.getPath('userData'), 'backups')
+    fs.mkdirSync(dir, { recursive: true })
+    const today = new Date().toISOString().slice(0, 10)
+    if (getSetting('lastBackupDate') === today) return null
+    const src = path.join(
+      app.getPath('userData'),
+      SMOKE ? 'aurora-smoke.db' : 'aurora.db',
+    )
+    if (!fs.existsSync(src)) return null
+    const dest = path.join(
+      dir,
+      `${SMOKE ? 'aurora-smoke' : 'aurora'}-${today}.db`,
+    )
+    if (!fs.existsSync(dest)) fs.copyFileSync(src, dest)
+    setSetting('lastBackupDate', today)
+    const backups = fs
+      .readdirSync(dir)
+      .filter((f) => f.endsWith('.db'))
+      .sort()
+      .reverse()
+    for (const f of backups.slice(7)) {
+      try {
+        fs.unlinkSync(path.join(dir, f))
+      } catch {
+        /* ignore */
+      }
+    }
+    return dest
+  } catch (err) {
+    bootLog('backup failed: ' + String(err))
+    return null
+  }
+}
+
 function createWindow(): void {
   win = new BrowserWindow({
     width: 1280,
@@ -74,9 +156,12 @@ function createWindow(): void {
   win.once('ready-to-show', () => win?.show())
   win.on('maximize', () => win?.webContents.send('window:maximized', true))
   win.on('unmaximize', () => win?.webContents.send('window:maximized', false))
+  win.on('resize', scheduleBoundsSave)
+  win.on('move', scheduleBoundsSave)
   win.on('closed', () => {
     win = null
   })
+  restoreWindowBounds()
 
   const errors: string[] = []
   win.webContents.on(
@@ -181,7 +266,7 @@ const DOM_AUDIT = `
       (el.getAttribute('data-role') + ':' + (el.textContent || '').slice(0, 20)).replace(/\\s+/g, ' ')
     ),
     smokeSends: window.__smokeSends || [],
-    smokeMsgOps: (window.__smokeMsgOps || []).slice(-14),
+    smokeMsgOps: (window.__smokeMsgOps || []).slice(-40),
     userMsg: !!document.querySelector('[data-role="user"]'),
     assistantMsg: !!document.querySelector('[data-role="assistant"]'),
     toolStepCards: document.querySelectorAll('[data-tool-step]').length,
@@ -296,6 +381,16 @@ const DOM_AUDIT = `
     return false
   }
 
+  // 错误重试：点击错误卡片的"重试"按钮
+  const retryBtn = document.querySelector('[data-error-retry]')
+  out.retryBtnExists = !!retryBtn
+  if (retryBtn) retryBtn.click()
+  out.retryStarted = await waitFor(() => !!document.querySelector('button[aria-label="停止"]'), 8000)
+  out.retryDone = await waitFor(() => !document.querySelector('button[aria-label="停止"]'), 20000)
+  await sleep(300)
+  out.retryWorks = !document.querySelector('[data-error]')
+  out.msgAfterRetry = document.querySelectorAll('[data-role]').length
+
   // 编辑消息并重发（分支截断）
   const editBtn = document.querySelector('button[aria-label="编辑消息"]')
   if (editBtn) editBtn.click()
@@ -382,6 +477,10 @@ async function runSmoke(w: BrowserWindow, errors: string[]): Promise<void> {
   const kbSearch = kbManager.search('知识库 检索', 5)
   report.kbSearchHits = kbSearch.refs.length
   report.kbSearchTitle = kbSearch.refs[0]?.title ?? ''
+  const todayStr = new Date().toISOString().slice(0, 10)
+  report.autoBackupOk = fs.existsSync(
+    path.join(app.getPath('userData'), 'backups', `aurora-smoke-${todayStr}.db`),
+  )
 
   // 等待渲染层完成三阶段验证：① Mock 完整流式 ② 中途停止截断 ③ 会话切换/持久化
   let stopVerified: { stoppedEarly: boolean; errored: boolean } | null = null
@@ -407,6 +506,16 @@ async function runSmoke(w: BrowserWindow, errors: string[]): Promise<void> {
   })
   await Promise.race([convDone, new Promise((r) => setTimeout(r, 45000))])
   bootLog('conv-verified: ' + JSON.stringify(convVerified))
+  if (!convVerified) {
+    const diag = await w.webContents
+      .executeJavaScript(
+        `({ ready: document.readyState, root: !!document.getElementById('root'), scripts: document.scripts.length, title: document.title, url: location.href })`,
+        true,
+      )
+      .catch((e) => String(e))
+    bootLog('conv-timeout diag: ' + JSON.stringify(diag))
+    bootLog('conv-timeout errors: ' + JSON.stringify(errors.slice(0, 10)))
+  }
   report.stopVerified = stopVerified
   report.convVerified = convVerified
 
@@ -424,6 +533,7 @@ async function runSmoke(w: BrowserWindow, errors: string[]): Promise<void> {
     }
   })
   await Promise.race([exportDone, new Promise((r) => setTimeout(r, 40000))])
+  bootLog('export-verified: ' + JSON.stringify(exportVerified))
   report.exportVerified = exportVerified
 
   // 等待系统提示词注入验证
@@ -440,6 +550,7 @@ async function runSmoke(w: BrowserWindow, errors: string[]): Promise<void> {
     }
   })
   await Promise.race([promptDone, new Promise((r) => setTimeout(r, 40000))])
+  bootLog('prompt-verified: ' + JSON.stringify(promptVerified))
   report.promptVerified = promptVerified
 
   // 等待工具调用端到端验证
@@ -456,6 +567,7 @@ async function runSmoke(w: BrowserWindow, errors: string[]): Promise<void> {
     }
   })
   await Promise.race([toolsDone, new Promise((r) => setTimeout(r, 40000))])
+  bootLog('tools-verified: ' + JSON.stringify(toolsVerified))
   report.toolsVerified = toolsVerified
   // 立即检查工作目录文件与 DB 步骤落盘（后续编辑测试会截断消息）
   const helloPath = path.join(app.getPath('userData'), 'workspace', 'hello.py')
@@ -486,6 +598,7 @@ async function runSmoke(w: BrowserWindow, errors: string[]): Promise<void> {
     }
   })
   await Promise.race([shellDone, new Promise((r) => setTimeout(r, 40000))])
+  bootLog('shell-verified: ' + JSON.stringify(shellVerified))
   report.shellVerified = shellVerified
   // 白名单单元验证 + Python 可用性检测与直执行
   report.whitelistUnitOk =
@@ -556,6 +669,22 @@ async function runSmoke(w: BrowserWindow, errors: string[]): Promise<void> {
   await Promise.race([kbDone, new Promise((r) => setTimeout(r, 40000))])
   report.kbVerified = kbVerified
 
+  // 等待错误与重试验证
+  let errorVerified: { done: boolean; errorShown: boolean } | null = null
+  let errResolve: (() => void) | null = null
+  const errDone = new Promise<void>((resolve) => {
+    errResolve = resolve
+  })
+  ipcMain.on('smoke:error-verified', (_e, p) => {
+    errorVerified = p
+    if (errResolve) {
+      errResolve()
+      errResolve = null
+    }
+  })
+  await Promise.race([errDone, new Promise((r) => setTimeout(r, 40000))])
+  report.errorVerified = errorVerified
+
   // 浅色阶段
   nativeTheme.themeSource = 'light'
   await new Promise((r) => setTimeout(r, 1200))
@@ -605,7 +734,7 @@ async function runSmoke(w: BrowserWindow, errors: string[]): Promise<void> {
     failures.push(`检查器宽度异常: ${dom.inspectorW}`)
   if (dom.chatW < 600) failures.push(`对话区宽度异常: ${dom.chatW}`)
   if (dom.overflowX === true) failures.push('存在水平溢出')
-  if (dom.messages !== 16) failures.push(`冒烟消息数量错误: ${dom.messages}`)
+  if (dom.messages !== 18) failures.push(`冒烟消息数量错误: ${dom.messages}`)
   // 气泡宽度固定：应铺满消息容器（不随内容长度变化）
   if (dom.assistantBubbleW < 600)
     failures.push(`助手气泡未固定全宽: ${dom.assistantBubbleW}`)
@@ -678,7 +807,7 @@ async function runSmoke(w: BrowserWindow, errors: string[]): Promise<void> {
   if (dom.katex !== true) failures.push('KaTeX 公式未渲染')
   if (dom.copyBtn !== true) failures.push('复制按钮缺失')
   if (dom.stopBtn !== false) failures.push('对话结束后停止按钮仍存在')
-  if (dom.errorCard !== false) failures.push('出现了错误卡片')
+  if (dom.errorCard !== true) failures.push('预期错误卡片缺失（错误场景未生效）')
   if (dom.sidebarItems !== 2) failures.push(`侧边栏会话数错误: ${dom.sidebarItems}`)
   if (!String(dom.activeConv).includes('冒烟测试'))
     failures.push(`侧边栏激活项异常: ${dom.activeConv}`)
@@ -791,6 +920,17 @@ async function runSmoke(w: BrowserWindow, errors: string[]): Promise<void> {
   if (!kbv || kbv.done !== true)
     failures.push('知识库 Agent 端到端验证失败: ' + JSON.stringify(kbv))
   if (kbv && kbv.refsOk !== true) failures.push('知识库引用未渲染')
+  // 错误与重试断言
+  const erv = errorVerified as { done: boolean; errorShown: boolean } | null
+  if (!erv || erv.done !== true || erv.errorShown !== true)
+    failures.push('错误场景验证失败: ' + JSON.stringify(erv))
+  if (dom.retryBtnExists !== true) failures.push('错误重试按钮缺失')
+  if (dom.retryStarted !== true || dom.retryDone !== true)
+    failures.push('重试流程未完成')
+  if (dom.retryWorks !== true) failures.push('重试后错误卡片未消失')
+  if (dom.msgAfterRetry !== 18) failures.push(`重试后消息数错误: ${dom.msgAfterRetry}`)
+  // 自动备份断言
+  if (report.autoBackupOk !== true) failures.push('自动备份未生成')
   if (dom.editStarted !== true || dom.editFlowDone !== true)
     failures.push('编辑重发流程未完成')
   if (dom.editMsgs !== 2) failures.push(`编辑后消息数错误: ${dom.editMsgs}`)
@@ -1079,6 +1219,8 @@ app.whenReady().then(async () => {
   }
   await kbManager.init()
   bootLog('kb init ok')
+  const backupPath = doAutoBackup()
+  bootLog('auto backup: ' + (backupPath ?? 'skipped'))
   registerChatIpc(listModels)
   bootLog('chat ipc registered')
   // 恢复用户配置的 MCP 服务器（冒烟模式由 runSmoke 显式配置）
@@ -1115,6 +1257,7 @@ app.on('window-all-closed', () => {
 })
 
 app.on('will-quit', () => {
+  saveWindowBounds()
   globalShortcut.unregisterAll()
   closeDb()
 })

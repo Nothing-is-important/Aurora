@@ -207,6 +207,8 @@ async function runChat(
 }
 
 // ---- OpenAI 兼容 SSE 单轮调用（累积 tool_calls）----
+const RESPONSE_TIMEOUT_MS = 180_000
+
 async function sseCallOnce(
   wc: WebContents,
   requestId: string,
@@ -216,81 +218,98 @@ async function sseCallOnce(
   tools: unknown[],
   onFirstToken?: () => void,
 ): Promise<StreamOutcome> {
-  const url = `${model.baseUrl.replace(/\/+$/, '')}/chat/completions`
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${model.apiKey}`,
-    },
-    body: JSON.stringify({
-      model: model.modelId,
-      messages,
-      tools,
-      stream: true,
-      temperature: model.temperature,
-      max_tokens: model.maxTokens,
-      top_p: model.topP,
-    }),
-    signal,
-  })
-  if (!res.ok || !res.body) {
-    const detail = await res.text().catch(() => '')
-    throw new Error(`HTTP ${res.status}${detail ? ': ' + detail.slice(0, 300) : ''}`)
-  }
-  const reader = res.body.getReader()
-  const decoder = new TextDecoder()
-  let buf = ''
-  let finish = ''
-  const toolCalls = new Map<number, { id: string; name: string; argsStr: string }>()
-  for (;;) {
-    const { done, value } = await reader.read()
-    if (done) break
-    buf += decoder.decode(value, { stream: true })
-    const lines = buf.split('\n')
-    buf = lines.pop() ?? ''
-    for (const line of lines) {
-      const t = line.trim()
-      if (!t.startsWith('data:')) continue
-      const data = t.slice(5).trim()
-      if (!data || data === '[DONE]') continue
-      try {
-        const j = JSON.parse(data)
-        const choice = j.choices?.[0]
-        const delta = choice?.delta ?? {}
-        if (typeof delta.reasoning_content === 'string' && delta.reasoning_content) {
-          emit(wc, 'chat:delta', { requestId, reasoning: delta.reasoning_content })
-        }
-        if (typeof delta.content === 'string' && delta.content) {
-          onFirstToken?.()
-          emit(wc, 'chat:delta', { requestId, content: delta.content })
-        }
-        if (Array.isArray(delta.tool_calls)) {
-          for (const tc of delta.tool_calls) {
-            const idx = tc.index ?? 0
-            const cur = toolCalls.get(idx) ?? { id: '', name: '', argsStr: '' }
-            if (tc.id) cur.id = tc.id
-            if (tc.function?.name) cur.name = tc.function.name
-            if (tc.function?.arguments) cur.argsStr += tc.function.arguments
-            toolCalls.set(idx, cur)
+  // 组合外部停止信号与整体超时
+  const ac = new AbortController()
+  const onOuterAbort = (): void => ac.abort()
+  signal.addEventListener('abort', onOuterAbort, { once: true })
+  const timeoutTimer = setTimeout(() => ac.abort(), RESPONSE_TIMEOUT_MS)
+  try {
+    const url = `${model.baseUrl.replace(/\/+$/, '')}/chat/completions`
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${model.apiKey}`,
+      },
+      body: JSON.stringify({
+        model: model.modelId,
+        messages,
+        tools,
+        stream: true,
+        temperature: model.temperature,
+        max_tokens: model.maxTokens,
+        top_p: model.topP,
+      }),
+      signal: ac.signal,
+    })
+    if (!res.ok || !res.body) {
+      const detail = await res.text().catch(() => '')
+      throw new Error(`HTTP ${res.status}${detail ? ': ' + detail.slice(0, 300) : ''}`)
+    }
+    const reader = res.body.getReader()
+    const decoder = new TextDecoder()
+    let buf = ''
+    let finish = ''
+    const toolCalls = new Map<number, { id: string; name: string; argsStr: string }>()
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buf += decoder.decode(value, { stream: true })
+      const lines = buf.split('\n')
+      buf = lines.pop() ?? ''
+      for (const line of lines) {
+        const t = line.trim()
+        if (!t.startsWith('data:')) continue
+        const data = t.slice(5).trim()
+        if (!data || data === '[DONE]') continue
+        try {
+          const j = JSON.parse(data)
+          const choice = j.choices?.[0]
+          const delta = choice?.delta ?? {}
+          if (typeof delta.reasoning_content === 'string' && delta.reasoning_content) {
+            emit(wc, 'chat:delta', { requestId, reasoning: delta.reasoning_content })
           }
+          if (typeof delta.content === 'string' && delta.content) {
+            onFirstToken?.()
+            emit(wc, 'chat:delta', { requestId, content: delta.content })
+          }
+          if (Array.isArray(delta.tool_calls)) {
+            for (const tc of delta.tool_calls) {
+              const idx = tc.index ?? 0
+              const cur = toolCalls.get(idx) ?? { id: '', name: '', argsStr: '' }
+              if (tc.id) cur.id = tc.id
+              if (tc.function?.name) cur.name = tc.function.name
+              if (tc.function?.arguments) cur.argsStr += tc.function.arguments
+              toolCalls.set(idx, cur)
+            }
+          }
+          if (choice?.finish_reason) finish = choice.finish_reason
+          if (j.usage) {
+            emit(wc, 'chat:usage', { requestId, usage: j.usage })
+          }
+        } catch {
+          /* 忽略不完整行 */
         }
-        if (choice?.finish_reason) finish = choice.finish_reason
-        if (j.usage) {
-          emit(wc, 'chat:usage', { requestId, usage: j.usage })
-        }
-      } catch {
-        /* 忽略不完整行 */
       }
     }
-  }
-  return {
-    finish,
-    toolCalls: [...toolCalls.values()].filter((tc) => tc.name),
+    return {
+      finish,
+      toolCalls: [...toolCalls.values()].filter((tc) => tc.name),
+    }
+  } catch (err) {
+    if (ac.signal.aborted && !signal.aborted) {
+      throw new Error(`响应超时（${RESPONSE_TIMEOUT_MS / 1000} 秒）`)
+    }
+    throw err
+  } finally {
+    clearTimeout(timeoutTimer)
+    signal.removeEventListener('abort', onOuterAbort)
   }
 }
 
 // ---- Mock 单轮调用（含工具调用演示）----
+let mockErrorFired = false
+
 function chunks(text: string, n: number): string[] {
   const out: string[] = []
   for (let i = 0; i < text.length; i += n) out.push(text.slice(i, i + n))
@@ -317,6 +336,13 @@ async function mockCallOnce(
   const wantsFetchDemo = userText.includes('抓取')
   const wantsMcpDemo = userText.includes('MCP')
   const wantsKbDemo = userText.includes('知识库')
+  const wantsErrorDemo = userText.includes('模拟错误')
+  // 模拟临时错误：仅第一次失败，重试应成功（真实世界语义）
+  if (wantsErrorDemo && !hasToolResult && !mockErrorFired) {
+    mockErrorFired = true
+    await sleep(300, signal)
+    throw new Error('模拟的错误响应（用于验证错误卡片与重试功能）')
+  }
   const wantsToolDemo =
     wantsFileDemo || wantsShellDemo || wantsPythonDemo || wantsSearchDemo || wantsFetchDemo || wantsMcpDemo || wantsKbDemo
 

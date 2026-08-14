@@ -190,6 +190,12 @@ export interface AuroraApi {
   smokeNotifyNetVerified: (p: { done: boolean; refsOk: boolean }) => void
   smokeNotifyMcpVerified: (p: { done: boolean; mcpOk: boolean }) => void
   smokeNotifyKbVerified: (p: { done: boolean; refsOk: boolean }) => void
+  smokeNotifyErrorVerified: (p: {
+    done: boolean
+    errorShown: boolean
+    lastStatus?: string
+    lastError?: string
+  }) => void
   smokeNotifyStopVerified: (p: { stoppedEarly: boolean; errored: boolean }) => void
   smokeNotifyConvVerified: (p: {
     listCount: number
