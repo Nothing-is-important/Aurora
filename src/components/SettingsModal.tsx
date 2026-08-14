@@ -71,6 +71,11 @@ export default function SettingsModal({
   const [mcpCmd, setMcpCmd] = useState('')
   const [mcpArgs, setMcpArgs] = useState('')
   const [kbList, setKbList] = useState<KbRow[]>([])
+  const [appVersion, setAppVersion] = useState('')
+
+  useEffect(() => {
+    void window.aurora.app.getVersion().then(setAppVersion)
+  }, [])
 
   const loadKb = (): void => {
     void window.aurora.kb.list().then(setKbList)
@@ -346,6 +351,16 @@ export default function SettingsModal({
                       <Check size={12} strokeWidth={2.6} /> 已保存
                     </span>
                   )}
+                  <div className="ml-auto flex items-center gap-3 text-[11px] text-black/35 dark:text-white/35">
+                    <button
+                      data-open-datadir
+                      onClick={() => void window.aurora.app.openDataDir()}
+                      className="transition-colors hover:text-apple-blue"
+                    >
+                      打开数据目录
+                    </button>
+                    <span data-app-version>v{appVersion || '0.1.0'}</span>
+                  </div>
                 </div>
               </div>
 

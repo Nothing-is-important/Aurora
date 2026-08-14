@@ -375,6 +375,8 @@ const DOM_AUDIT = `
   out.settingsApiKeyInput = !!document.querySelector('[data-settings-apikey]')
   out.settingsModelIdInput = !!document.querySelector('[data-settings-modelid]')
   out.settingsProxyInput = !!document.querySelector('[data-proxy-input]')
+  out.openDataDirBtn = !!document.querySelector('[data-open-datadir]')
+  out.appVersion = (document.querySelector('[data-app-version]') || {}).textContent || ''
   const closeSettings = document.querySelector('button[aria-label="关闭设置"]')
   if (closeSettings) closeSettings.click()
   await sleep(350)
@@ -922,6 +924,9 @@ async function runSmoke(w: BrowserWindow, errors: string[]): Promise<void> {
     dom.settingsProxyInput !== true
   )
     failures.push('设置表单字段缺失')
+  if (dom.openDataDirBtn !== true) failures.push('打开数据目录按钮缺失')
+  if (!String(dom.appVersion).startsWith('v0.1'))
+    failures.push(`版本号显示异常: ${dom.appVersion}`)
   if (dom.settingsClosed !== true) failures.push('设置弹窗未关闭')
   // 导出验证
   const ev = exportVerified as {
@@ -1171,6 +1176,14 @@ ipcMain.handle('kb:rebuild', (_e, id: string) => kbManager.rebuild(id))
 // ---- MCP ----
 ipcMain.handle('mcp:configure', async (_e, servers) => {
   return await mcpManager.configure(servers)
+})
+
+// ---- 应用信息 ----
+ipcMain.handle('app:getVersion', () => app.getVersion())
+ipcMain.handle('app:openDataDir', () => {
+  if (SMOKE) return true
+  void shell.openPath(app.getPath('userData'))
+  return true
 })
 
 // ---- 会话导出 ----

@@ -159,6 +159,10 @@ export interface AuroraApi {
     writeText: (text: string) => Promise<boolean>
   }
   openExternal: (url: string) => Promise<boolean>
+  app: {
+    getVersion: () => Promise<string>
+    openDataDir: () => Promise<boolean>
+  }
   mcp: {
     configure: (
       servers: McpServerConfig[],

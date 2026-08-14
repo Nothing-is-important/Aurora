@@ -191,6 +191,10 @@ const api = {
   },
   openExternal: (url: string): Promise<boolean> =>
     ipcRenderer.invoke('app:openExternal', url),
+  app: {
+    getVersion: (): Promise<string> => ipcRenderer.invoke('app:getVersion'),
+    openDataDir: (): Promise<boolean> => ipcRenderer.invoke('app:openDataDir'),
+  },
   mcp: {
     configure: (
       servers: McpServerConfig[],
