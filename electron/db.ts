@@ -360,6 +360,20 @@ export function upsertMessage(m: {
   persist()
 }
 
+/** 删除某条消息及其之后的所有消息（编辑/重新生成分支用） */
+export function deleteMessagesFrom(
+  conversationId: string,
+  fromId: string,
+): void {
+  if (!db) return
+  db.run(
+    `DELETE FROM messages WHERE conversation_id = ?
+     AND (id = ? OR created_at > (SELECT created_at FROM messages WHERE id = ?))`,
+    [conversationId, fromId, fromId],
+  )
+  persist()
+}
+
 function randomId(): string {
   const c = 'abcdefghijklmnopqrstuvwxyz0123456789'
   let s = ''

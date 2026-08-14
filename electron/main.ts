@@ -175,6 +175,14 @@ const DOM_AUDIT = `
     smokeMsgOps: (window.__smokeMsgOps || []).slice(-14),
     userMsg: !!document.querySelector('[data-role="user"]'),
     assistantMsg: !!document.querySelector('[data-role="assistant"]'),
+    assistantBubbleW: (() => {
+      const el = document.querySelector('[data-role="assistant"] > div')
+      return el ? Math.round(el.getBoundingClientRect().width) : 0
+    })(),
+    assistantWrapperW: (() => {
+      const el = document.querySelector('[data-role="assistant"]')
+      return el ? Math.round(el.getBoundingClientRect().width) : 0
+    })(),
     reasoning: !!document.querySelector('[data-reasoning]'),
     codeBlock: !!document.querySelector('.code-block'),
     hljs: !!document.querySelector('.hljs'),
@@ -319,6 +327,14 @@ async function runSmoke(w: BrowserWindow, errors: string[]): Promise<void> {
   if (dom.chatW < 600) failures.push(`对话区宽度异常: ${dom.chatW}`)
   if (dom.overflowX === true) failures.push('存在水平溢出')
   if (dom.messages !== 4) failures.push(`冒烟消息数量错误: ${dom.messages}`)
+  // 气泡宽度固定：应铺满消息容器（不随内容长度变化）
+  if (dom.assistantBubbleW < 600)
+    failures.push(`助手气泡未固定全宽: ${dom.assistantBubbleW}`)
+  if (
+    dom.assistantWrapperW > 0 &&
+    Math.abs(dom.assistantBubbleW - dom.assistantWrapperW) > 4
+  )
+    failures.push(`气泡宽 ${dom.assistantBubbleW} ≠ 容器宽 ${dom.assistantWrapperW}`)
   if (dom.sendBtn !== true || dom.newChatBtn !== true) failures.push('关键按钮缺失')
   if (dom.darkClass !== true) failures.push('深色截图阶段 dark 类未应用')
   // 聊天核心断言

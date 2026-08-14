@@ -32,7 +32,7 @@ function Cursor() {
 function AssistantBubble({ m }: { m: ChatMessage }) {
   const reasoningActive = m.status === 'streaming' && m.content === ''
   return (
-    <div className="glass-strong max-w-[86%] rounded-[22px] rounded-bl-md px-4 py-3 text-[14px] leading-relaxed text-black/80 shadow-soft dark:text-white/85">
+    <div className="glass-strong w-full rounded-[22px] rounded-bl-md px-4 py-3 text-[14px] leading-relaxed text-black/80 shadow-soft dark:text-white/85">
       {m.reasoning !== '' && (
         <details
           data-reasoning
