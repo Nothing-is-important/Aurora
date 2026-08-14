@@ -52,6 +52,12 @@
       "dist/**/*",
       "package.json"
     ],
+    "extraResources": [
+      {
+        "from": "scripts/mock-mcp-server.mjs",
+        "to": "mock-mcp-server.mjs"
+      }
+    ],
     "win": {
       "target": [
         {

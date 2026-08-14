@@ -222,6 +222,7 @@ function AppInner() {
 
   // ---- 冒烟第九阶段：联网搜索端到端 ----
   const phase9 = useRef(false)
+  const [netDone, setNetDone] = useState(false)
   useEffect(() => {
     if (!window.aurora.smoke || !shellDone || phase9.current) return
     phase9.current = true
@@ -237,8 +238,32 @@ function AppInner() {
         .flatMap((m) => m.toolSteps ?? [])
         .flatMap((s) => s.refs ?? [])
       window.aurora.smokeNotifyNetVerified({ done: ok, refsOk: refs.length >= 3 })
+      setNetDone(true)
     })()
   }, [shellDone, chat])
+
+  // ---- 冒烟第十阶段：MCP Agent 端到端 ----
+  const phase10 = useRef(false)
+  useEffect(() => {
+    if (!window.aurora.smoke || !netDone || phase10.current) return
+    phase10.current = true
+    void (async () => {
+      chat.send('请调用 MCP 工具 echo 输出 aurora-mcp-ok')
+      const ok = await waitFor(
+        () =>
+          streamingAppRef.current === null &&
+          messagesRef.current.length === 14,
+        30000,
+      )
+      const mcpSteps = messagesRef.current.flatMap((m) =>
+        (m.toolSteps ?? []).filter((s) => s.name.startsWith('mcp__')),
+      )
+      const mcpOk =
+        mcpSteps.length > 0 &&
+        mcpSteps.some((s) => s.resultSummary.includes('aurora-mcp-ok'))
+      window.aurora.smokeNotifyMcpVerified({ done: ok, mcpOk })
+    })()
+  }, [netDone, chat])
 
   const handleSelect = useCallback((id: string) => {
     setActiveId(id)

@@ -32,6 +32,7 @@ import {
 } from './db'
 import { registerChatIpc, getSmokeChatRequests } from './chat'
 import { isShellAllowed, runPython } from './tools'
+import { mcpManager } from './mcp'
 import { spawnSync } from 'child_process'
 
 const SMOKE = process.env.SMOKE === '1'
@@ -336,8 +337,31 @@ async function runSmoke(w: BrowserWindow, errors: string[]): Promise<void> {
     ? path.join(app.getPath('userData'), 'shots')
     : path.join(__dirname, '../../shots')
   fs.mkdirSync(shotsDir, { recursive: true })
+
   const failures: string[] = []
   const report: Record<string, unknown> = {}
+
+  // MCP：配置内置 mock 服务器并验证握手与工具调用
+  const mockMcpScript = app.isPackaged
+    ? path.join(process.resourcesPath, 'mock-mcp-server.mjs')
+    : path.join(__dirname, '../../scripts/mock-mcp-server.mjs')
+  const mcpStatus = await mcpManager.configure([
+    {
+      id: 'mock_server',
+      name: 'Mock MCP',
+      command: 'node',
+      args: [mockMcpScript],
+      enabled: true,
+    },
+  ])
+  report.mcpStatus = mcpStatus
+  if (mcpStatus.connected.includes('mock_server')) {
+    report.mcpToolCount = mcpManager.getToolDefs().length
+    const echo = await mcpManager.callTool('mcp__mock_server__echo', {
+      text: 'aurora-mcp-ok',
+    })
+    report.mcpEchoResult = echo.ok ? echo.result : `ERR: ${echo.error}`
+  }
 
   // 等待渲染层完成三阶段验证：① Mock 完整流式 ② 中途停止截断 ③ 会话切换/持久化
   let stopVerified: { stoppedEarly: boolean; errored: boolean } | null = null
@@ -480,6 +504,22 @@ async function runSmoke(w: BrowserWindow, errors: string[]): Promise<void> {
     report.realNetworkOk = false
   }
 
+  // 等待 MCP Agent 端到端验证
+  let mcpVerified: { done: boolean; mcpOk: boolean } | null = null
+  let mcpResolve: (() => void) | null = null
+  const mcpDone = new Promise<void>((resolve) => {
+    mcpResolve = resolve
+  })
+  ipcMain.on('smoke:mcp-verified', (_e, p) => {
+    mcpVerified = p
+    if (mcpResolve) {
+      mcpResolve()
+      mcpResolve = null
+    }
+  })
+  await Promise.race([mcpDone, new Promise((r) => setTimeout(r, 40000))])
+  report.mcpVerified = mcpVerified
+
   // 浅色阶段
   nativeTheme.themeSource = 'light'
   await new Promise((r) => setTimeout(r, 1200))
@@ -529,7 +569,7 @@ async function runSmoke(w: BrowserWindow, errors: string[]): Promise<void> {
     failures.push(`检查器宽度异常: ${dom.inspectorW}`)
   if (dom.chatW < 600) failures.push(`对话区宽度异常: ${dom.chatW}`)
   if (dom.overflowX === true) failures.push('存在水平溢出')
-  if (dom.messages !== 12) failures.push(`冒烟消息数量错误: ${dom.messages}`)
+  if (dom.messages !== 14) failures.push(`冒烟消息数量错误: ${dom.messages}`)
   // 气泡宽度固定：应铺满消息容器（不随内容长度变化）
   if (dom.assistantBubbleW < 600)
     failures.push(`助手气泡未固定全宽: ${dom.assistantBubbleW}`)
@@ -695,6 +735,17 @@ async function runSmoke(w: BrowserWindow, errors: string[]): Promise<void> {
   if (nv && nv.refsOk !== true) failures.push('搜索引用数量不足 3')
   if (dom.refCards < 3) failures.push(`消息内引用卡片不足: ${dom.refCards}`)
   if (dom.inspectorRefs < 3) failures.push(`检查器引用 tab 不足: ${dom.inspectorRefs}`)
+  // MCP 断言
+  const ms = report.mcpStatus as { connected?: string[]; errors?: string[] } | undefined
+  if (!ms || !ms.connected || !ms.connected.includes('mock_server'))
+    failures.push('MCP 服务器未连接: ' + JSON.stringify(report.mcpStatus))
+  if (Number(report.mcpToolCount) < 1) failures.push(`MCP 工具未注册: ${report.mcpToolCount}`)
+  if (!String(report.mcpEchoResult).includes('aurora-mcp-ok'))
+    failures.push(`MCP echo 结果异常: ${report.mcpEchoResult}`)
+  const mcv = mcpVerified as { done: boolean; mcpOk: boolean } | null
+  if (!mcv || mcv.done !== true)
+    failures.push('MCP Agent 端到端验证失败: ' + JSON.stringify(mcv))
+  if (mcv && mcv.mcpOk !== true) failures.push('MCP 步骤结果未回显 aurora-mcp-ok')
   if (dom.editStarted !== true || dom.editFlowDone !== true)
     failures.push('编辑重发流程未完成')
   if (dom.editMsgs !== 2) failures.push(`编辑后消息数错误: ${dom.editMsgs}`)
@@ -799,6 +850,11 @@ ipcMain.handle('app:openExternal', (_e, url: string) => {
   if (SMOKE) return true // 冒烟不真打开浏览器
   if (/^https?:\/\//i.test(url)) void shell.openExternal(url)
   return true
+})
+
+// ---- MCP ----
+ipcMain.handle('mcp:configure', async (_e, servers) => {
+  return await mcpManager.configure(servers)
 })
 
 // ---- 会话导出 ----
@@ -957,6 +1013,14 @@ app.whenReady().then(async () => {
   }
   registerChatIpc(listModels)
   bootLog('chat ipc registered')
+  // 恢复用户配置的 MCP 服务器（冒烟模式由 runSmoke 显式配置）
+  if (!SMOKE) {
+    try {
+      await mcpManager.restoreFromSettings()
+    } catch (err) {
+      bootLog('mcp restore failed: ' + String(err))
+    }
+  }
   createWindow()
   bootLog('window created')
 

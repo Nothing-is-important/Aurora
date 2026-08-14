@@ -6,10 +6,11 @@ import {
   Loader2,
   Plus,
   PlugZap,
+  Server,
   Trash2,
   X,
 } from 'lucide-react'
-import type { ModelConfig } from '../lib/ipc'
+import type { ModelConfig, McpServerConfig } from '../lib/ipc'
 
 interface SettingsModalProps {
   open: boolean
@@ -59,6 +60,22 @@ export default function SettingsModal({
   const [sysSaved, setSysSaved] = useState(false)
   const [whitelistText, setWhitelistText] = useState('')
   const [wlSaved, setWlSaved] = useState(false)
+  const [mcpServers, setMcpServers] = useState<McpServerConfig[]>([])
+  const [mcpMsg, setMcpMsg] = useState<string | null>(null)
+  const [mcpName, setMcpName] = useState('')
+  const [mcpCmd, setMcpCmd] = useState('')
+  const [mcpArgs, setMcpArgs] = useState('')
+
+  const loadMcp = (): void => {
+    void window.aurora.settings.get('mcpServers').then((v) => {
+      try {
+        const arr = v ? JSON.parse(v) : []
+        setMcpServers(Array.isArray(arr) ? arr : [])
+      } catch {
+        setMcpServers([])
+      }
+    })
+  }
 
   useEffect(() => {
     if (open) {
@@ -75,8 +92,40 @@ export default function SettingsModal({
         }
         setWlSaved(false)
       })
+      loadMcp()
     }
   }, [open])
+
+  const applyMcp = async (list: McpServerConfig[]): Promise<void> => {
+    setMcpServers(list)
+    const r = await window.aurora.mcp.configure(list)
+    setMcpMsg(
+      r.errors.length
+        ? `失败：${r.errors.join('；')}`
+        : `已连接 ${r.connected.length} 个 MCP 服务器`,
+    )
+    setTimeout(() => setMcpMsg(null), 3000)
+  }
+
+  const addMcp = (): void => {
+    const name = mcpName.trim()
+    const cmd = mcpCmd.trim()
+    if (!name || !cmd) return
+    const next = [
+      ...mcpServers,
+      {
+        id: `mcp-${Date.now().toString(36)}`,
+        name,
+        command: cmd,
+        args: mcpArgs.trim() ? mcpArgs.trim().split(/\s+/) : [],
+        enabled: true,
+      },
+    ]
+    setMcpName('')
+    setMcpCmd('')
+    setMcpArgs('')
+    void applyMcp(next)
+  }
 
   const saveSysPrompt = async (): Promise<void> => {
     await window.aurora.settings.set('systemPrompt', sysPrompt)
@@ -301,6 +350,98 @@ export default function SettingsModal({
                   <span className="text-[11px] text-black/35 dark:text-white/35">
                     白名单内的命令执行时不再弹窗确认
                   </span>
+                </div>
+              </div>
+
+              <div>
+                <label className={label}>MCP 服务器（stdio 启动）</label>
+                <div className="space-y-1.5">
+                  {mcpServers.length === 0 && (
+                    <p className="rounded-lg bg-black/[0.03] px-3 py-2.5 text-[11.5px] text-black/40 dark:bg-white/[0.05] dark:text-white/40">
+                      暂无 MCP 服务器。示例：npx -y @modelcontextprotocol/server-filesystem C:\path
+                    </p>
+                  )}
+                  {mcpServers.map((s) => (
+                    <div
+                      key={s.id}
+                      data-mcp-row
+                      className="flex items-center gap-2 rounded-xl bg-black/[0.035] px-3 py-2 dark:bg-white/[0.05]"
+                    >
+                      <Server size={13} strokeWidth={2} className="shrink-0 text-apple-blue" />
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-[12px] font-medium text-black/75 dark:text-white/80">
+                          {s.name}
+                        </span>
+                        <span className="block truncate font-mono text-[10.5px] text-black/35 dark:text-white/35">
+                          {s.command} {s.args.join(' ')}
+                        </span>
+                      </span>
+                      <span
+                        onClick={() =>
+                          void applyMcp(
+                            mcpServers.map((x) =>
+                              x.id === s.id ? { ...x, enabled: !x.enabled } : x,
+                            ),
+                          )
+                        }
+                        className={`relative h-4.5 w-8 shrink-0 cursor-pointer rounded-full transition-colors duration-200 ${
+                          s.enabled ? 'bg-apple-green' : 'bg-black/20 dark:bg-white/20'
+                        }`}
+                        style={{ height: 18, width: 32 }}
+                      >
+                        <span
+                          className="absolute top-0.5 h-3.5 w-3.5 rounded-full bg-white shadow-soft transition-all duration-200"
+                          style={{
+                            left: s.enabled ? 15 : 2,
+                            height: 14,
+                            width: 14,
+                          }}
+                        />
+                      </span>
+                      <button
+                        onClick={() => void applyMcp(mcpServers.filter((x) => x.id !== s.id))}
+                        className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-black/35 transition-colors hover:bg-apple-red/10 hover:text-apple-red dark:text-white/35"
+                      >
+                        <Trash2 size={12} strokeWidth={2.2} />
+                      </button>
+                    </div>
+                  ))}
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      data-mcp-name
+                      className={`${field} !w-24`}
+                      value={mcpName}
+                      onChange={(e) => setMcpName(e.target.value)}
+                      placeholder="名称"
+                    />
+                    <input
+                      data-mcp-cmd
+                      className={`${field} flex-1`}
+                      value={mcpCmd}
+                      onChange={(e) => setMcpCmd(e.target.value)}
+                      placeholder="npx / node / uvx"
+                    />
+                    <input
+                      className={`${field} flex-1`}
+                      value={mcpArgs}
+                      onChange={(e) => setMcpArgs(e.target.value)}
+                      placeholder="参数（空格分隔）"
+                    />
+                    <button
+                      onClick={addMcp}
+                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-apple-blue/10 text-apple-blue transition-colors hover:bg-apple-blue/20"
+                    >
+                      <Plus size={14} strokeWidth={2.6} />
+                    </button>
+                  </div>
+                  {mcpMsg && (
+                    <p
+                      data-mcp-msg
+                      className="text-[11.5px] text-black/45 dark:text-white/45"
+                    >
+                      {mcpMsg}
+                    </p>
+                  )}
                 </div>
               </div>
 

@@ -81,6 +81,14 @@ export interface ConnectionTestResult {
   models?: number | null
 }
 
+export interface McpServerConfig {
+  id: string
+  name: string
+  command: string
+  args: string[]
+  enabled: boolean
+}
+
 export interface AuroraApi {
   smoke: boolean
   window: {
@@ -143,6 +151,11 @@ export interface AuroraApi {
     writeText: (text: string) => Promise<boolean>
   }
   openExternal: (url: string) => Promise<boolean>
+  mcp: {
+    configure: (
+      servers: McpServerConfig[],
+    ) => Promise<{ connected: string[]; errors: string[] }>
+  }
   chat: {
     start: (req: ChatStartRequest) => void
     stop: (requestId: string) => void
@@ -161,6 +174,7 @@ export interface AuroraApi {
   smokeNotifyToolsVerified: (p: { done: boolean; steps: number }) => void
   smokeNotifyShellVerified: (p: { done: boolean; shellOk: boolean }) => void
   smokeNotifyNetVerified: (p: { done: boolean; refsOk: boolean }) => void
+  smokeNotifyMcpVerified: (p: { done: boolean; mcpOk: boolean }) => void
   smokeNotifyStopVerified: (p: { stoppedEarly: boolean; errored: boolean }) => void
   smokeNotifyConvVerified: (p: {
     listCount: number

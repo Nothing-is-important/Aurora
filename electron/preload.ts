@@ -83,6 +83,14 @@ export interface ConnectionTestResult {
   models?: number | null
 }
 
+export interface McpServerConfig {
+  id: string
+  name: string
+  command: string
+  args: string[]
+  enabled: boolean
+}
+
 function on<T>(channel: string, cb: (payload: T) => void): () => void {
   const listener = (_e: unknown, payload: T): void => cb(payload)
   ipcRenderer.on(channel, listener)
@@ -175,6 +183,12 @@ const api = {
   },
   openExternal: (url: string): Promise<boolean> =>
     ipcRenderer.invoke('app:openExternal', url),
+  mcp: {
+    configure: (
+      servers: McpServerConfig[],
+    ): Promise<{ connected: string[]; errors: string[] }> =>
+      ipcRenderer.invoke('mcp:configure', servers),
+  },
   chat: {
     start: (req: ChatStartRequest): void => ipcRenderer.send('chat:start', req),
     stop: (requestId: string): void =>
@@ -201,6 +215,8 @@ const api = {
     ipcRenderer.send('smoke:shell-verified', p),
   smokeNotifyNetVerified: (p: { done: boolean; refsOk: boolean }): void =>
     ipcRenderer.send('smoke:net-verified', p),
+  smokeNotifyMcpVerified: (p: { done: boolean; mcpOk: boolean }): void =>
+    ipcRenderer.send('smoke:mcp-verified', p),
   smokeNotifyStopVerified: (p: { stoppedEarly: boolean; errored: boolean }): void =>
     ipcRenderer.send('smoke:stop-verified', p),
   smokeNotifyConvVerified: (p: {

@@ -2,6 +2,7 @@ import { ipcMain } from 'electron'
 import type { WebContents } from 'electron'
 import type { ModelConfig } from './db'
 import { executeTool, TOOL_DEFS } from './tools'
+import { mcpManager } from './mcp'
 
 export interface ApiChatMessage {
   role: string
@@ -119,11 +120,12 @@ async function runChat(
         role: m.role,
         content: m.content as string | unknown[] | null,
       }))
+      const tools = [...TOOL_DEFS, ...mcpManager.getToolDefs()]
       for (let round = 0; round < MAX_ROUNDS; round++) {
         const outcome =
           model.provider === 'mock'
             ? await mockCallOnce(wc, req.requestId, ac.signal, messages, onFirstToken)
-            : await sseCallOnce(wc, req.requestId, model, ac.signal, messages, onFirstToken)
+            : await sseCallOnce(wc, req.requestId, model, ac.signal, messages, tools, onFirstToken)
         if (outcome.toolCalls.length === 0 || outcome.finish !== 'tool_calls') {
           break
         }
@@ -151,7 +153,9 @@ async function runChat(
               resultSummary: '',
             },
           })
-          const r = await executeTool(tc.name, args)
+          const r = await (tc.name.startsWith('mcp__')
+            ? mcpManager.callTool(tc.name, args)
+            : executeTool(tc.name, args))
           const summary = (r.ok ? r.result : r.error) ?? ''
           emit(wc, 'chat:tool', {
             requestId: req.requestId,
@@ -209,6 +213,7 @@ async function sseCallOnce(
   model: ModelConfig,
   signal: AbortSignal,
   messages: ApiChatMessage[],
+  tools: unknown[],
   onFirstToken?: () => void,
 ): Promise<StreamOutcome> {
   const url = `${model.baseUrl.replace(/\/+$/, '')}/chat/completions`
@@ -221,7 +226,7 @@ async function sseCallOnce(
     body: JSON.stringify({
       model: model.modelId,
       messages,
-      tools: TOOL_DEFS,
+      tools,
       stream: true,
       temperature: model.temperature,
       max_tokens: model.maxTokens,
@@ -310,14 +315,23 @@ async function mockCallOnce(
     userText.includes('6*7') || userText.includes('run_python')
   const wantsSearchDemo = userText.includes('搜索')
   const wantsFetchDemo = userText.includes('抓取')
+  const wantsMcpDemo = userText.includes('MCP')
   const wantsToolDemo =
-    wantsFileDemo || wantsShellDemo || wantsPythonDemo || wantsSearchDemo || wantsFetchDemo
+    wantsFileDemo || wantsShellDemo || wantsPythonDemo || wantsSearchDemo || wantsFetchDemo || wantsMcpDemo
 
   if (wantsToolDemo && !hasToolResult) {
     // 第一轮：演示工具调用
     let toolCall: ToolCall
     let reasoning: string
-    if (wantsShellDemo) {
+    if (wantsMcpDemo) {
+      toolCall = {
+        id: 'call_mock_mcp',
+        name: 'mcp__mock_server__echo',
+        argsStr: JSON.stringify({ text: 'aurora-mcp-ok' }),
+      }
+      reasoning =
+        '用户想验证 MCP 工具链路。我将调用 MCP 服务器 mock_server 的 echo 工具，检查结果是否回显 aurora-mcp-ok。'
+    } else if (wantsShellDemo) {
       toolCall = {
         id: 'call_mock_shell',
         name: 'run_shell',
