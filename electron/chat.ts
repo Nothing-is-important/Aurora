@@ -3,6 +3,7 @@ import type { WebContents } from 'electron'
 import type { ModelConfig } from './db'
 import { executeTool, TOOL_DEFS } from './tools'
 import { mcpManager } from './mcp'
+import { getDispatcher } from './net'
 
 export interface ApiChatMessage {
   role: string
@@ -241,6 +242,7 @@ async function sseCallOnce(
         top_p: model.topP,
       }),
       signal: ac.signal,
+      ...(getDispatcher() ? { dispatcher: getDispatcher() } : {}),
     })
     if (!res.ok || !res.body) {
       const detail = await res.text().catch(() => '')

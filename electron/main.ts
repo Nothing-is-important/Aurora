@@ -320,6 +320,7 @@ const DOM_AUDIT = `
   out.settingsBaseUrlInput = !!document.querySelector('[data-settings-baseurl]')
   out.settingsApiKeyInput = !!document.querySelector('[data-settings-apikey]')
   out.settingsModelIdInput = !!document.querySelector('[data-settings-modelid]')
+  out.settingsProxyInput = !!document.querySelector('[data-proxy-input]')
   const closeSettings = document.querySelector('button[aria-label="关闭设置"]')
   if (closeSettings) closeSettings.click()
   await sleep(350)
@@ -525,6 +526,10 @@ async function runSmoke(w: BrowserWindow, errors: string[]): Promise<void> {
   report.autoBackupOk = fs.existsSync(
     path.join(app.getPath('userData'), 'backups', `aurora-smoke-${todayStr}.db`),
   )
+  // 代理设置存取验证（真实网络请求不测，仅验证配置链路）
+  setSetting('proxyUrl', 'http://127.0.0.1:7890')
+  report.proxySettingOk = getSetting('proxyUrl') === 'http://127.0.0.1:7890'
+  setSetting('proxyUrl', '')
 
   // 等待渲染层完成三阶段验证：① Mock 完整流式 ② 中途停止截断 ③ 会话切换/持久化
   let stopVerified: { stoppedEarly: boolean; errored: boolean } | null = null
@@ -859,7 +864,8 @@ async function runSmoke(w: BrowserWindow, errors: string[]): Promise<void> {
     dom.settingsNameInput !== true ||
     dom.settingsBaseUrlInput !== true ||
     dom.settingsApiKeyInput !== true ||
-    dom.settingsModelIdInput !== true
+    dom.settingsModelIdInput !== true ||
+    dom.settingsProxyInput !== true
   )
     failures.push('设置表单字段缺失')
   if (dom.settingsClosed !== true) failures.push('设置弹窗未关闭')
@@ -975,6 +981,7 @@ async function runSmoke(w: BrowserWindow, errors: string[]): Promise<void> {
   if (dom.msgAfterRetry !== 18) failures.push(`重试后消息数错误: ${dom.msgAfterRetry}`)
   // 自动备份断言
   if (report.autoBackupOk !== true) failures.push('自动备份未生成')
+  if (report.proxySettingOk !== true) failures.push('代理设置存取异常')
   if (dom.editStarted !== true || dom.editFlowDone !== true)
     failures.push('编辑重发流程未完成')
   if (dom.editMsgs !== 2) failures.push(`编辑后消息数错误: ${dom.editMsgs}`)

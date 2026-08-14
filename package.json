@@ -14,7 +14,8 @@
     "dist": "npm run build && electron-builder --win nsis"
   },
   "dependencies": {
-    "sql.js": "^1.13.0"
+    "sql.js": "^1.13.0",
+    "undici": "^8.10.0"
   },
   "devDependencies": {
     "@fontsource/inter": "^5.1.0",

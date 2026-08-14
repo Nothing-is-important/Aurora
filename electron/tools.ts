@@ -4,6 +4,7 @@ import { exec } from 'child_process'
 import { app, dialog } from 'electron'
 import { getSetting, setSetting } from './db'
 import { kbManager } from './kb'
+import { getDispatcher } from './net'
 
 let workspaceDir = ''
 
@@ -211,6 +212,7 @@ export async function webSearch(
     const res = await fetch(`https://cn.bing.com/search?q=${q}&setlang=zh-hans`, {
       signal: ac.signal,
       headers: { 'User-Agent': UA },
+      ...(getDispatcher() ? { dispatcher: getDispatcher() } : {}),
     })
     clearTimeout(timer)
     if (!res.ok) return { ok: false, error: `HTTP ${res.status}` }
@@ -265,6 +267,7 @@ export async function fetchUrl(
       signal: ac.signal,
       redirect: 'follow',
       headers: { 'User-Agent': UA },
+      ...(getDispatcher() ? { dispatcher: getDispatcher() } : {}),
     })
     clearTimeout(timer)
     if (!res.ok) return { ok: false, error: `HTTP ${res.status}` }

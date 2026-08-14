@@ -63,6 +63,8 @@ export default function SettingsModal({
   const [sysSaved, setSysSaved] = useState(false)
   const [whitelistText, setWhitelistText] = useState('')
   const [wlSaved, setWlSaved] = useState(false)
+  const [proxyUrl, setProxyUrl] = useState('')
+  const [proxySaved, setProxySaved] = useState(false)
   const [mcpServers, setMcpServers] = useState<McpServerConfig[]>([])
   const [mcpMsg, setMcpMsg] = useState<string | null>(null)
   const [mcpName, setMcpName] = useState('')
@@ -99,6 +101,10 @@ export default function SettingsModal({
           setWhitelistText('')
         }
         setWlSaved(false)
+      })
+      void window.aurora.settings.get('proxyUrl').then((v) => {
+        setProxyUrl(v ?? '')
+        setProxySaved(false)
       })
       loadMcp()
       loadKb()
@@ -155,6 +161,12 @@ export default function SettingsModal({
     await window.aurora.settings.set('shellWhitelist', JSON.stringify(list))
     setWlSaved(true)
     setTimeout(() => setWlSaved(false), 2000)
+  }
+
+  const saveProxy = async (): Promise<void> => {
+    await window.aurora.settings.set('proxyUrl', proxyUrl.trim())
+    setProxySaved(true)
+    setTimeout(() => setProxySaved(false), 2000)
   }
 
   useEffect(() => {
@@ -365,6 +377,35 @@ export default function SettingsModal({
                     白名单内的命令执行时不再弹窗确认
                   </span>
                 </div>
+              </div>
+
+              <div>
+                <label className={label}>
+                  网络代理（HTTP 代理，如 http://127.0.0.1:7890；留空直连）
+                </label>
+                <div className="flex items-center gap-2">
+                  <input
+                    data-proxy-input
+                    className={`${field} flex-1`}
+                    value={proxyUrl}
+                    onChange={(e) => setProxyUrl(e.target.value)}
+                    placeholder="http://127.0.0.1:7890"
+                  />
+                  <button
+                    onClick={() => void saveProxy()}
+                    className="h-8 rounded-lg bg-apple-blue px-3.5 text-[12px] font-medium text-white transition-all duration-200 ease-spring hover:brightness-110 active:scale-[0.96]"
+                  >
+                    保存
+                  </button>
+                  {proxySaved && (
+                    <span className="flex shrink-0 items-center gap-1 text-[11.5px] text-apple-green">
+                      <Check size={12} strokeWidth={2.6} /> 已保存
+                    </span>
+                  )}
+                </div>
+                <p className="mt-1 text-[11px] text-black/35 dark:text-white/35">
+                  应用于模型请求、联网搜索与网页抓取
+                </p>
               </div>
 
               <div>
