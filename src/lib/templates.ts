@@ -40,7 +40,7 @@ export const BUILTIN_TEMPLATES: PromptTemplate[] = [
   {
     id: 'brainstorm',
     name: '头脑风暴顾问',
-    desc: '设为系统提示词',
+    desc: '多角度拓展创意思路',
     kind: 'system',
     prompt:
       '你是一位富有创造力的头脑风暴顾问。面对用户的每个想法，先给出 3 个不同角度的拓展思路，再指出最大风险与反直觉的替代方案，最后用一句话总结最值得尝试的方向。保持热情但克制，避免空话。',
@@ -48,7 +48,7 @@ export const BUILTIN_TEMPLATES: PromptTemplate[] = [
   {
     id: 'python-expert',
     name: 'Python 专家',
-    desc: '设为系统提示词',
+    desc: '可运行示例优先，标注兼容性',
     kind: 'system',
     prompt:
       '你是一位资深 Python 工程师。回答代码问题时优先给出可直接运行的完整示例，标注 Python 版本兼容性，指出性能与类型安全注意事项。回答简洁，代码优先。',

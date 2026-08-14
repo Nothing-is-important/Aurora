@@ -446,6 +446,12 @@ const DOM_AUDIT = `
   await sleep(300)
   out.promptMenuOpen = !!document.querySelector('[data-prompt-menu]')
   out.templateItems = document.querySelectorAll('[data-template-item]').length
+  out.templateTexts = Array.from(document.querySelectorAll('[data-template-item]')).map(
+    (b) => (b.textContent || '').replace(/\\s+/g, ' ').trim()
+  )
+  out.templateUnique =
+    new Set(out.templateTexts).size === out.templateTexts.length &&
+    out.templateTexts.every((t) => !t.includes('设为系统提示词 · 设为系统提示词'))
   const chatTpl = Array.from(document.querySelectorAll('[data-template-item]')).find(
     (b) => (b.textContent || '').includes('翻译助手')
   )
@@ -982,6 +988,8 @@ async function runSmoke(w: BrowserWindow, errors: string[]): Promise<void> {
     )
   if (dom.promptMenuOpen !== true) failures.push('模板菜单未打开')
   if (dom.templateItems < 6) failures.push(`模板条目过少: ${dom.templateItems}`)
+  if (dom.templateUnique !== true)
+    failures.push('模板条目存在重复或重复短语: ' + JSON.stringify(dom.templateTexts))
   if (dom.promptMenuClosed !== true) failures.push('模板菜单未关闭')
   if (dom.inputHasTemplate !== true) failures.push('模板未填入输入框')
   // 工具调用断言
