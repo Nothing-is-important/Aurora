@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { ChatUsage, ModelConfig, PickedFile } from './ipc'
+import type { ChatUsage, ModelConfig, PickedFile, ToolStep } from './ipc'
 
 export interface ChatMessage {
   id: string
@@ -11,6 +11,7 @@ export interface ChatMessage {
   usage?: ChatUsage
   durationMs?: number
   firstTokenMs?: number
+  toolSteps?: ToolStep[]
 }
 
 let smokeAutoStarted = false
@@ -82,6 +83,7 @@ export function useChat(opts: UseChatOptions): ChatController {
       usage: m.usage,
       durationMs: m.durationMs,
       firstTokenMs: m.firstTokenMs,
+      toolSteps: m.toolSteps,
       createdAt: Date.now(),
     })
   }, [])
@@ -171,6 +173,22 @@ export function useChat(opts: UseChatOptions): ChatController {
           prev.map((m) => (m.id === requestId ? { ...m, usage } : m)),
         )
       }),
+      window.aurora.chat.onTool(({ requestId, step }) => {
+        setMessages((prev) => {
+          const idx = prev.findIndex((m) => m.id === requestId)
+          if (idx < 0) return prev
+          const next = [...prev]
+          const existing = next[idx].toolSteps ?? []
+          const si = existing.findIndex((s) => s.id === step.id)
+          const steps =
+            si >= 0
+              ? existing.map((s, i) => (i === si ? step : s))
+              : [...existing, step]
+          next[idx] = { ...next[idx], toolSteps: steps }
+          scheduleFlush(next[idx])
+          return next
+        })
+      }),
     ]
     return () => offs.forEach((off) => off())
   }, [scheduleFlush, flushMessage])
@@ -207,6 +225,9 @@ export function useChat(opts: UseChatOptions): ChatController {
         usage: r.usageJson ? (JSON.parse(r.usageJson) as ChatUsage) : undefined,
         durationMs: r.durationMs || undefined,
         firstTokenMs: r.firstTokenMs || undefined,
+        toolSteps: r.toolStepsJson
+          ? (JSON.parse(r.toolStepsJson) as ToolStep[])
+          : undefined,
       }))
       smokeLog('load', { n: msgs.length, ids: msgs.map((m) => m.id.slice(0, 6)) })
       setMessages(msgs)

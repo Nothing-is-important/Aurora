@@ -34,6 +34,14 @@ export interface ConversationRow {
   updatedAt: number
 }
 
+export interface ToolStep {
+  id: string
+  name: string
+  args: Record<string, unknown>
+  status: 'running' | 'done' | 'error'
+  resultSummary: string
+}
+
 export interface MessageRow {
   id: string
   conversationId: string
@@ -45,6 +53,7 @@ export interface MessageRow {
   usageJson: string
   durationMs: number
   firstTokenMs: number
+  toolStepsJson: string
   createdAt: number
 }
 
@@ -113,6 +122,7 @@ export interface AuroraApi {
         usage?: unknown
         durationMs?: number
         firstTokenMs?: number
+        toolSteps?: unknown
         createdAt: number
       }) => Promise<boolean>
       deleteFrom: (conversationId: string, fromId: string) => Promise<boolean>
@@ -137,8 +147,10 @@ export interface AuroraApi {
     }) => void) => () => void
     onError: (cb: (p: { requestId: string; message: string; aborted: boolean }) => void) => () => void
     onUsage: (cb: (p: { requestId: string; usage: ChatUsage }) => void) => () => void
+    onTool: (cb: (p: { requestId: string; step: ToolStep }) => void) => () => void
   }
   smokeNotifyChatDone: () => void
+  smokeNotifyToolsVerified: (p: { done: boolean; steps: number }) => void
   smokeNotifyStopVerified: (p: { stoppedEarly: boolean; errored: boolean }) => void
   smokeNotifyConvVerified: (p: {
     listCount: number

@@ -146,6 +146,7 @@ function AppInner() {
   const phase6 = useRef(false)
   const streamingAppRef = useRef(chat.streamingId)
   streamingAppRef.current = chat.streamingId
+  const [promptDone, setPromptDone] = useState(false)
   useEffect(() => {
     if (!window.aurora.smoke || !exportDone || phase6.current) return
     phase6.current = true
@@ -170,8 +171,27 @@ function AppInner() {
         25000,
       )
       window.aurora.smokeNotifyPromptVerified({ sent: ok, sysOk: ok })
+      setPromptDone(true)
     })()
   }, [exportDone, chat])
+
+  // ---- 冒烟第七阶段：工具调用端到端 ----
+  const phase7 = useRef(false)
+  useEffect(() => {
+    if (!window.aurora.smoke || !promptDone || phase7.current) return
+    phase7.current = true
+    void (async () => {
+      chat.send('请帮我在工作目录写一个 hello.py 文件，然后读取它的内容确认')
+      const ok = await waitFor(
+        () =>
+          streamingAppRef.current === null &&
+          messagesRef.current.length === 8,
+        30000,
+      )
+      const steps = messagesRef.current.flatMap((m) => m.toolSteps ?? []).length
+      window.aurora.smokeNotifyToolsVerified({ done: ok, steps })
+    })()
+  }, [promptDone, chat])
 
   const handleSelect = useCallback((id: string) => {
     setActiveId(id)

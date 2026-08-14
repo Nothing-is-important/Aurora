@@ -10,11 +10,13 @@ import {
   Copy,
   FileText,
   Lightbulb,
+  Loader2,
   Paperclip,
   Pencil,
   RefreshCw,
   Sparkles,
   Square,
+  Wrench,
   X,
 } from 'lucide-react'
 import type { ChatController, ChatMessage } from '../lib/chat'
@@ -49,6 +51,48 @@ function AssistantBubble({
   const cost = estimateCost(m.usage, pricing)
   return (
     <div className="glass-strong w-full rounded-[22px] rounded-bl-md px-4 py-3 text-[14px] leading-relaxed text-black/80 shadow-soft dark:text-white/85">
+      {m.toolSteps && m.toolSteps.length > 0 && (
+        <div className="mb-2.5 space-y-1.5">
+          {m.toolSteps.map((s) => (
+            <div
+              key={s.id}
+              data-tool-step
+              className={`flex items-center gap-2 rounded-xl border px-3 py-2 text-[12px] ${
+                s.status === 'error'
+                  ? 'border-apple-red/25 bg-apple-red/[0.07]'
+                  : 'border-black/[0.07] bg-black/[0.035] dark:border-white/[0.09] dark:bg-white/[0.05]'
+              }`}
+            >
+              <Wrench
+                size={13}
+                strokeWidth={2}
+                className={`shrink-0 ${
+                  s.status === 'error'
+                    ? 'text-apple-red'
+                    : s.status === 'done'
+                      ? 'text-apple-green'
+                      : 'text-apple-blue'
+                }`}
+              />
+              <span className="shrink-0 font-mono text-[11.5px] font-semibold text-black/70 dark:text-white/75">
+                {s.name}
+              </span>
+              <span className="min-w-0 flex-1 truncate text-[11px] text-black/45 dark:text-white/45">
+                {s.resultSummary || JSON.stringify(s.args).slice(0, 80)}
+              </span>
+              <span className="shrink-0">
+                {s.status === 'running' ? (
+                  <Loader2 size={13} className="animate-spin text-apple-blue" />
+                ) : s.status === 'done' ? (
+                  <Check size={13} strokeWidth={2.6} className="text-apple-green" />
+                ) : (
+                  <X size={13} strokeWidth={2.6} className="text-apple-red" />
+                )}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
       {m.reasoning !== '' && (
         <details
           data-reasoning

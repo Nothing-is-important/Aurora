@@ -111,6 +111,7 @@ function migrate(): void {
       usage_json TEXT NOT NULL DEFAULT '',
       duration_ms INTEGER NOT NULL DEFAULT 0,
       first_token_ms INTEGER NOT NULL DEFAULT 0,
+      tool_steps_json TEXT NOT NULL DEFAULT '',
       created_at INTEGER NOT NULL
     );
   `)
@@ -126,6 +127,7 @@ function migrate(): void {
   alt(`ALTER TABLE messages ADD COLUMN usage_json TEXT NOT NULL DEFAULT ''`)
   alt(`ALTER TABLE messages ADD COLUMN duration_ms INTEGER NOT NULL DEFAULT 0`)
   alt(`ALTER TABLE messages ADD COLUMN first_token_ms INTEGER NOT NULL DEFAULT 0`)
+  alt(`ALTER TABLE messages ADD COLUMN tool_steps_json TEXT NOT NULL DEFAULT ''`)
   alt(`ALTER TABLE conversations ADD COLUMN system_prompt TEXT NOT NULL DEFAULT ''`)
 }
 
@@ -331,6 +333,7 @@ export interface MessageRow {
   usageJson: string
   durationMs: number
   firstTokenMs: number
+  toolStepsJson: string
   createdAt: number
 }
 
@@ -348,7 +351,8 @@ function rowToMsg(row: MsgRow): MessageRow {
     usageJson: String(row[7]),
     durationMs: Number(row[8]),
     firstTokenMs: Number(row[9]),
-    createdAt: Number(row[10]),
+    toolStepsJson: String(row[10]),
+    createdAt: Number(row[11]),
   }
 }
 
@@ -356,7 +360,7 @@ export function listMessages(conversationId: string): MessageRow[] {
   if (!db) return []
   const res = db.exec(
     `SELECT id,conversation_id,role,content,reasoning,status,error,
-            usage_json,duration_ms,first_token_ms,created_at
+            usage_json,duration_ms,first_token_ms,tool_steps_json,created_at
      FROM messages WHERE conversation_id = ? ORDER BY created_at, rowid`,
     [conversationId],
   )
@@ -375,25 +379,28 @@ export function upsertMessage(m: {
   usage?: unknown
   durationMs?: number
   firstTokenMs?: number
+  toolSteps?: unknown
   createdAt: number
 }): void {
   if (!db) return
   db.run(
     `INSERT INTO messages
        (id,conversation_id,role,content,reasoning,status,error,
-        usage_json,duration_ms,first_token_ms,created_at)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?)
+        usage_json,duration_ms,first_token_ms,tool_steps_json,created_at)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
      ON CONFLICT(id) DO UPDATE SET
        content=excluded.content, reasoning=excluded.reasoning,
        status=excluded.status, error=excluded.error,
        usage_json=excluded.usage_json, duration_ms=excluded.duration_ms,
-       first_token_ms=excluded.first_token_ms`,
+       first_token_ms=excluded.first_token_ms,
+       tool_steps_json=excluded.tool_steps_json`,
     [
       m.id, m.conversationId, m.role, m.content, m.reasoning, m.status,
       m.error ?? '',
       m.usage ? JSON.stringify(m.usage) : '',
       m.durationMs ?? 0,
       m.firstTokenMs ?? 0,
+      m.toolSteps ? JSON.stringify(m.toolSteps) : '',
       m.createdAt,
     ],
   )

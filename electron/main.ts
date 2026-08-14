@@ -179,6 +179,7 @@ const DOM_AUDIT = `
     smokeMsgOps: (window.__smokeMsgOps || []).slice(-14),
     userMsg: !!document.querySelector('[data-role="user"]'),
     assistantMsg: !!document.querySelector('[data-role="assistant"]'),
+    toolStepCards: document.querySelectorAll('[data-tool-step]').length,
     assistantBubbleW: (() => {
       const el = document.querySelector('[data-role="assistant"] > div')
       return el ? Math.round(el.getBoundingClientRect().width) : 0
@@ -236,7 +237,13 @@ const DOM_AUDIT = `
   await sleep(300)
   out.paletteClosed = !document.querySelector('[data-command-palette]')
 
-  // 检查器信息 tab 与导出按钮
+  // 检查器：工具 tab 与信息 tab
+  const toolsTab = Array.from(document.querySelectorAll('aside button')).find((b) =>
+    (b.textContent || '').includes('工具调用')
+  )
+  if (toolsTab) toolsTab.click()
+  await sleep(300)
+  out.inspectorToolStep = !!document.querySelector('[data-inspector-toolstep]')
   const infoTab = Array.from(document.querySelectorAll('aside button')).find((b) =>
     (b.textContent || '').includes('信息')
   )
@@ -381,6 +388,36 @@ async function runSmoke(w: BrowserWindow, errors: string[]): Promise<void> {
   await Promise.race([promptDone, new Promise((r) => setTimeout(r, 40000))])
   report.promptVerified = promptVerified
 
+  // 等待工具调用端到端验证
+  let toolsVerified: { done: boolean; steps: number } | null = null
+  let toolsResolve: (() => void) | null = null
+  const toolsDone = new Promise<void>((resolve) => {
+    toolsResolve = resolve
+  })
+  ipcMain.on('smoke:tools-verified', (_e, p) => {
+    toolsVerified = p
+    if (toolsResolve) {
+      toolsResolve()
+      toolsResolve = null
+    }
+  })
+  await Promise.race([toolsDone, new Promise((r) => setTimeout(r, 40000))])
+  report.toolsVerified = toolsVerified
+  // 立即检查工作目录文件与 DB 步骤落盘（后续编辑测试会截断消息）
+  const helloPath = path.join(app.getPath('userData'), 'workspace', 'hello.py')
+  report.helloExists = fs.existsSync(helloPath)
+  report.helloContent = fs.existsSync(helloPath)
+    ? fs.readFileSync(helloPath, 'utf-8').slice(0, 60)
+    : ''
+  const convBeforeEdit = listConversations().find((c) =>
+    c.title.startsWith('冒烟测试'),
+  )
+  report.toolStepsInDb = convBeforeEdit
+    ? listMessages(convBeforeEdit.id).some(
+        (m) => m.toolStepsJson && m.toolStepsJson.length > 10,
+      )
+    : false
+
   // 浅色阶段
   nativeTheme.themeSource = 'light'
   await new Promise((r) => setTimeout(r, 1200))
@@ -430,7 +467,7 @@ async function runSmoke(w: BrowserWindow, errors: string[]): Promise<void> {
     failures.push(`检查器宽度异常: ${dom.inspectorW}`)
   if (dom.chatW < 600) failures.push(`对话区宽度异常: ${dom.chatW}`)
   if (dom.overflowX === true) failures.push('存在水平溢出')
-  if (dom.messages !== 6) failures.push(`冒烟消息数量错误: ${dom.messages}`)
+  if (dom.messages !== 8) failures.push(`冒烟消息数量错误: ${dom.messages}`)
   // 气泡宽度固定：应铺满消息容器（不随内容长度变化）
   if (dom.assistantBubbleW < 600)
     failures.push(`助手气泡未固定全宽: ${dom.assistantBubbleW}`)
@@ -569,6 +606,18 @@ async function runSmoke(w: BrowserWindow, errors: string[]): Promise<void> {
   if (dom.templateItems < 6) failures.push(`模板条目过少: ${dom.templateItems}`)
   if (dom.promptMenuClosed !== true) failures.push('模板菜单未关闭')
   if (dom.inputHasTemplate !== true) failures.push('模板未填入输入框')
+  // 工具调用断言
+  const tv = toolsVerified as { done: boolean; steps: number } | null
+  if (!tv || tv.done !== true)
+    failures.push('工具调用端到端验证失败: ' + JSON.stringify(tv))
+  if (tv && tv.steps < 1) failures.push(`工具步骤数异常: ${tv.steps}`)
+  if (report.helloExists !== true)
+    failures.push('工作目录 hello.py 未落盘')
+  if (!String(report.helloContent).includes('hello from aurora'))
+    failures.push(`hello.py 内容异常: ${report.helloContent}`)
+  if (report.toolStepsInDb !== true) failures.push('DB 中工具步骤未落盘')
+  if (dom.toolStepCards === 0) failures.push('消息内工具步骤卡片缺失')
+  if (dom.inspectorToolStep !== true) failures.push('检查器工具 tab 步骤缺失')
   if (dom.editStarted !== true || dom.editFlowDone !== true)
     failures.push('编辑重发流程未完成')
   if (dom.editMsgs !== 2) failures.push(`编辑后消息数错误: ${dom.editMsgs}`)

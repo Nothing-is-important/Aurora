@@ -6,8 +6,10 @@ import {
   Gauge,
   Info,
   Link2,
+  Loader2,
   PanelRightClose,
   Wrench,
+  X,
 } from 'lucide-react'
 import type { ConversationRow, ModelConfig } from '../lib/ipc'
 import type { ChatMessage } from '../lib/chat'
@@ -271,16 +273,81 @@ export default function InspectorPanel({
             </div>
           )}
         </div>
+      ) : tab === 'tools' ? (
+        messages.some((m) => m.toolSteps && m.toolSteps.length > 0) ? (
+          <div className="flex-1 space-y-1.5 overflow-y-auto px-3 py-3">
+            {messages
+              .flatMap((m) => m.toolSteps ?? [])
+              .map((s) => (
+                <div
+                  key={s.id}
+                  data-inspector-toolstep
+                  className="rounded-xl bg-black/[0.035] px-3 py-2.5 dark:bg-white/[0.05]"
+                >
+                  <div className="flex items-center gap-2">
+                    <Wrench size={12} strokeWidth={2} className="shrink-0 text-apple-blue" />
+                    <span className="font-mono text-[11.5px] font-semibold text-black/70 dark:text-white/75">
+                      {s.name}
+                    </span>
+                    <span
+                      className={`ml-auto flex items-center gap-1 text-[10.5px] ${
+                        s.status === 'done'
+                          ? 'text-apple-green'
+                          : s.status === 'error'
+                            ? 'text-apple-red'
+                            : 'text-apple-blue'
+                      }`}
+                    >
+                      {s.status === 'done' ? (
+                        <Check size={11} strokeWidth={2.6} />
+                      ) : s.status === 'error' ? (
+                        <X size={11} strokeWidth={2.6} />
+                      ) : (
+                        <Loader2 size={11} className="animate-spin" />
+                      )}
+                      {s.status === 'done' ? '完成' : s.status === 'error' ? '失败' : '执行中'}
+                    </span>
+                  </div>
+                  <p className="mt-1 truncate font-mono text-[10.5px] text-black/40 dark:text-white/40">
+                    {JSON.stringify(s.args).slice(0, 100)}
+                  </p>
+                  {s.resultSummary && (
+                    <p className="mt-1 line-clamp-3 select-text whitespace-pre-wrap break-all text-[11px] leading-relaxed text-black/55 dark:text-white/55">
+                      {s.resultSummary}
+                    </p>
+                  )}
+                </div>
+              ))}
+          </div>
+        ) : (
+          <div className="flex flex-1 flex-col items-center justify-center gap-2.5 px-8 pb-16 text-center">
+            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-black/[0.04] text-black/25 dark:bg-white/[0.07] dark:text-white/30">
+              <Wrench size={19} strokeWidth={1.8} />
+            </div>
+            <p className="text-[13px] font-medium text-black/60 dark:text-white/60">
+              暂无工具调用
+            </p>
+            <p className="text-[12px] leading-relaxed text-black/35 dark:text-white/35">
+              对话中 Agent 执行的文件、代码、搜索等步骤会显示在这里
+            </p>
+          </div>
+        )
+      ) : tab === 'refs' ? (
+        <div className="flex flex-1 flex-col items-center justify-center gap-2.5 px-8 pb-16 text-center">
+          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-black/[0.04] text-black/25 dark:bg-white/[0.07] dark:text-white/30">
+            <Link2 size={19} strokeWidth={1.8} />
+          </div>
+          <p className="text-[13px] font-medium text-black/60 dark:text-white/60">
+            暂无引用
+          </p>
+          <p className="text-[12px] leading-relaxed text-black/35 dark:text-white/35">
+            知识库检索到的文档片段会显示在这里
+          </p>
+        </div>
       ) : (
         <div className="flex flex-1 flex-col items-center justify-center gap-2.5 px-8 pb-16 text-center">
           <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-black/[0.04] text-black/25 dark:bg-white/[0.07] dark:text-white/30">
-            {tab === 'tools' ? (
-              <Wrench size={19} strokeWidth={1.8} />
-            ) : tab === 'refs' ? (
-              <Link2 size={19} strokeWidth={1.8} />
-            ) : (
-              <Info size={19} strokeWidth={1.8} />
-            )}
+            <Info size={19} strokeWidth={1.8} />
           </div>
           <p className="text-[13px] font-medium text-black/60 dark:text-white/60">
             {empty.title}

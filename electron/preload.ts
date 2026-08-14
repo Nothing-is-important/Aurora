@@ -36,6 +36,14 @@ export interface ConversationRow {
   updatedAt: number
 }
 
+export interface ToolStep {
+  id: string
+  name: string
+  args: Record<string, unknown>
+  status: 'running' | 'done' | 'error'
+  resultSummary: string
+}
+
 export interface MessageRow {
   id: string
   conversationId: string
@@ -47,6 +55,7 @@ export interface MessageRow {
   usageJson: string
   durationMs: number
   firstTokenMs: number
+  toolStepsJson: string
   createdAt: number
 }
 
@@ -141,6 +150,7 @@ const api = {
         usage?: unknown
         durationMs?: number
         firstTokenMs?: number
+        toolSteps?: unknown
         createdAt: number
       }): Promise<boolean> => ipcRenderer.invoke('messages:upsert', m),
       deleteFrom: (conversationId: string, fromId: string): Promise<boolean> =>
@@ -172,8 +182,12 @@ const api = {
       on('chat:error', cb),
     onUsage: (cb: (p: { requestId: string; usage: ChatUsage }) => void) =>
       on('chat:usage', cb),
+    onTool: (cb: (p: { requestId: string; step: ToolStep }) => void) =>
+      on('chat:tool', cb),
   },
   smokeNotifyChatDone: (): void => ipcRenderer.send('smoke:chat-done'),
+  smokeNotifyToolsVerified: (p: { done: boolean; steps: number }): void =>
+    ipcRenderer.send('smoke:tools-verified', p),
   smokeNotifyStopVerified: (p: { stoppedEarly: boolean; errored: boolean }): void =>
     ipcRenderer.send('smoke:stop-verified', p),
   smokeNotifyConvVerified: (p: {
