@@ -345,6 +345,7 @@ export default function ChatArea({ chat, settingsOpen, onSmokePhase2Done }: Chat
     const allDone = messages.length >= 2 && messages.every((m) => m.status !== 'streaming')
     if (!allDone) return
     phase2.current = true
+    // 延迟 4s 启动：为主进程留出展示截图窗口（截图在第一轮对话完成后立即执行）
     setTimeout(() => {
       send('第二次冒烟：测试停止生成功能')
       // 停止计时器相对 send 触发，避免负载抖动下打在空流上
@@ -352,7 +353,7 @@ export default function ChatArea({ chat, settingsOpen, onSmokePhase2Done }: Chat
         phase2StopClicked.current = true
         stop()
       }, 400)
-    }, 500)
+    }, 4000)
   }, [messages, send, stop])
 
   useEffect(() => {

@@ -593,6 +593,37 @@ async function runSmoke(w: BrowserWindow, errors: string[]): Promise<void> {
   report.proxySettingOk = getSetting('proxyUrl') === 'http://127.0.0.1:7890'
   setSetting('proxyUrl', '')
 
+  // ============ 展示截图：第一轮 Mock 对话完成后立即截取 ============
+  // 此时界面干净（一条提问 + 完整富文本回复），最接近真实使用场景，
+  // 供 README 与开源展示使用；随后继续完整 12 阶段审计。
+  let chatDoneResolve: (() => void) | null = null
+  const chatDoneSignal = new Promise<void>((resolve) => {
+    chatDoneResolve = resolve
+  })
+  ipcMain.on('smoke:chat-done', () => {
+    if (chatDoneResolve) {
+      chatDoneResolve()
+      chatDoneResolve = null
+    }
+  })
+  await Promise.race([chatDoneSignal, new Promise((r) => setTimeout(r, 30000))])
+  nativeTheme.themeSource = 'light'
+  await new Promise((r) => setTimeout(r, 1200))
+  const light = await w.webContents.capturePage()
+  fs.writeFileSync(path.join(shotsDir, 'smoke-light.png'), light.toPNG())
+  nativeTheme.themeSource = 'dark'
+  await new Promise((r) => setTimeout(r, 1000))
+  const dark = await w.webContents.capturePage()
+  fs.writeFileSync(path.join(shotsDir, 'smoke-dark.png'), dark.toPNG())
+  const lightStats = sampleStats(light, { x: 0, y: 0, w: 1280, h: 820 })
+  const darkStats = sampleStats(dark, { x: 0, y: 0, w: 1280, h: 820 })
+  report.lightMeanLum = +lightStats.mean.toFixed(3)
+  report.lightVariance = +lightStats.variance.toFixed(4)
+  report.darkMeanLum = +darkStats.mean.toFixed(3)
+  report.shotsTaken = true
+  // 恢复浅色，让后续阶段在浅色下运行（audit 前再切深色）
+  nativeTheme.themeSource = 'light'
+
   // 等待渲染层完成三阶段验证：① Mock 完整流式 ② 中途停止截断 ③ 会话切换/持久化
   let stopVerified: { stoppedEarly: boolean; errored: boolean } | null = null
   ipcMain.on('smoke:stop-verified', (_e, p) => {
@@ -795,27 +826,11 @@ async function runSmoke(w: BrowserWindow, errors: string[]): Promise<void> {
   })
   await Promise.race([errDone, new Promise((r) => setTimeout(r, 40000))])
   report.errorVerified = errorVerified
-
-  // 浅色阶段
-  nativeTheme.themeSource = 'light'
-  await new Promise((r) => setTimeout(r, 1200))
-  const light = await w.webContents.capturePage()
-  fs.writeFileSync(path.join(shotsDir, 'smoke-light.png'), light.toPNG())
-
-  const lightStats = sampleStats(light, { x: 0, y: 0, w: 1280, h: 820 })
-  report.lightMeanLum = +lightStats.mean.toFixed(3)
-  report.lightVariance = +lightStats.variance.toFixed(4)
-
-  // 深色阶段
-  nativeTheme.themeSource = 'dark'
-  await new Promise((r) => setTimeout(r, 1000))
-  const dark = await w.webContents.capturePage()
-  fs.writeFileSync(path.join(shotsDir, 'smoke-dark.png'), dark.toPNG())
-  const darkStats = sampleStats(dark, { x: 0, y: 0, w: 1280, h: 820 })
-  report.darkMeanLum = +darkStats.mean.toFixed(3)
   report.globalShortcut = globalShortcut.isRegistered('CommandOrControl+Shift+A')
 
-  // DOM 审计
+  // DOM 审计（深色阶段执行，与 darkClass 断言保持一致）
+  nativeTheme.themeSource = 'dark'
+  await new Promise((r) => setTimeout(r, 800))
   const dom = (await w.webContents.executeJavaScript(DOM_AUDIT, true)) as Record<
     string,
     any
@@ -823,6 +838,7 @@ async function runSmoke(w: BrowserWindow, errors: string[]): Promise<void> {
   report.dom = dom
 
   // ---- 断言 ----
+  if (report.shotsTaken !== true) failures.push('展示截图未生成')
   if (lightStats.mean < 0.55) failures.push('浅色界面整体偏暗')
   if (darkStats.mean > 0.28) failures.push('深色界面整体偏亮')
   if (!(lightStats.mean > darkStats.mean + 0.15))
