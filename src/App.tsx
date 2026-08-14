@@ -225,6 +225,8 @@ function AppInner() {
         <InspectorPanel
           conversation={activeConv}
           messageCount={chat.messages.length}
+          messages={chat.messages}
+          activeModel={chat.models.find((m) => m.id === chat.modelId)}
         />
       </div>
 

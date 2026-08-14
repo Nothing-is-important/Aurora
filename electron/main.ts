@@ -242,6 +242,8 @@ const DOM_AUDIT = `
   await sleep(300)
   out.exportMdBtn = !!document.querySelector('[data-export-md]')
   out.exportJsonBtn = !!document.querySelector('[data-export-json]')
+  out.usageMeta = (document.querySelector('[data-usage]') || {}).textContent || ''
+  out.usageSummary = (document.querySelector('[data-usage-summary]') || {}).textContent || ''
 
   // 复制消息（主进程稍后验证剪贴板）
   const copyBtn = document.querySelector('button[aria-label="复制消息"]')
@@ -442,6 +444,17 @@ async function runSmoke(w: BrowserWindow, errors: string[]): Promise<void> {
     if (!hasCode) failures.push('DB 中未找到流式内容')
     const hasReasoning = msgs.some((m) => m.reasoning.length > 10)
     if (!hasReasoning) failures.push('DB 中思维链内容缺失')
+    const hasUsage = msgs.some((m) => {
+      try {
+        const u = JSON.parse(m.usageJson)
+        return u.total_tokens === 242
+      } catch {
+        return false
+      }
+    })
+    if (!hasUsage) failures.push('DB 中 usage 落盘缺失')
+    const hasDuration = msgs.some((m) => m.durationMs > 0)
+    if (!hasDuration) failures.push('DB 中耗时落盘缺失')
   } else {
     failures.push('DB 中未找到冒烟会话')
   }
@@ -499,6 +512,12 @@ async function runSmoke(w: BrowserWindow, errors: string[]): Promise<void> {
   // 对话增强断言
   if (dom.exportMdBtn !== true || dom.exportJsonBtn !== true)
     failures.push('导出按钮缺失')
+  // Token 统计断言
+  const usageMeta = String(dom.usageMeta)
+  if (!usageMeta.includes('tokens') || !usageMeta.includes('耗时') || !usageMeta.includes('≈¥'))
+    failures.push(`消息用量 meta 缺失: ${usageMeta}`)
+  if (!String(dom.usageSummary).includes('242'))
+    failures.push(`用量总览缺失: ${String(dom.usageSummary).slice(0, 60)}`)
   if (dom.editStarted !== true || dom.editFlowDone !== true)
     failures.push('编辑重发流程未完成')
   if (dom.editMsgs !== 2) failures.push(`编辑后消息数错误: ${dom.editMsgs}`)

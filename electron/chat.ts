@@ -67,14 +67,24 @@ async function runChat(
       message: '未找到所选模型',
       aborted: false,
     })
-    emit(wc, 'chat:done', { requestId: req.requestId, aborted: false })
+    emit(wc, 'chat:done', {
+      requestId: req.requestId,
+      aborted: false,
+      durationMs: 0,
+      firstTokenMs: 0,
+    })
     return
   }
   const ac = new AbortController()
   active.set(req.requestId, ac)
+  const startAt = Date.now()
+  let firstTokenAt = 0
+  const onFirstToken = (): void => {
+    if (!firstTokenAt) firstTokenAt = Date.now()
+  }
   try {
     if (model.provider === 'mock') {
-      await mockStream(wc, req, ac.signal)
+      await mockStream(wc, req, ac.signal, onFirstToken)
     } else if (!model.apiKey) {
       emit(wc, 'chat:error', {
         requestId: req.requestId,
@@ -82,9 +92,14 @@ async function runChat(
         aborted: false,
       })
     } else {
-      await sseStream(wc, req, model, ac.signal)
+      await sseStream(wc, req, model, ac.signal, onFirstToken)
     }
-    emit(wc, 'chat:done', { requestId: req.requestId, aborted: false })
+    emit(wc, 'chat:done', {
+      requestId: req.requestId,
+      aborted: false,
+      durationMs: Date.now() - startAt,
+      firstTokenMs: firstTokenAt ? firstTokenAt - startAt : 0,
+    })
   } catch (err) {
     const aborted = ac.signal.aborted
     emit(wc, 'chat:error', {
@@ -92,7 +107,12 @@ async function runChat(
       message: aborted ? '已停止生成' : errMessage(err),
       aborted,
     })
-    emit(wc, 'chat:done', { requestId: req.requestId, aborted })
+    emit(wc, 'chat:done', {
+      requestId: req.requestId,
+      aborted,
+      durationMs: Date.now() - startAt,
+      firstTokenMs: firstTokenAt ? firstTokenAt - startAt : 0,
+    })
   } finally {
     active.delete(req.requestId)
   }
@@ -104,6 +124,7 @@ async function sseStream(
   req: ChatStartRequest,
   model: ModelConfig,
   signal: AbortSignal,
+  onFirstToken?: () => void,
 ): Promise<void> {
   const url = `${model.baseUrl.replace(/\/+$/, '')}/chat/completions`
   const res = await fetch(url, {
@@ -150,6 +171,7 @@ async function sseStream(
           })
         }
         if (typeof delta.content === 'string' && delta.content) {
+          onFirstToken?.()
           emit(wc, 'chat:delta', {
             requestId: req.requestId,
             content: delta.content,
@@ -176,6 +198,7 @@ async function mockStream(
   wc: WebContents,
   req: ChatStartRequest,
   signal: AbortSignal,
+  onFirstToken?: () => void,
 ): Promise<void> {
   const reasoning =
     '用户希望看到一个综合示例。我可以准备一段包含二级标题、Python 代码块、LaTeX 公式与列表的 Markdown 回复，用来验证流式渲染、语法高亮、复制按钮与 KaTeX 是否正常工作。'
@@ -221,6 +244,7 @@ async function mockStream(
   ].join('\n')
 
   for (const ch of chunks(content, 8)) {
+    onFirstToken?.()
     emit(wc, 'chat:delta', { requestId: req.requestId, content: ch })
     await sleep(16, signal)
   }

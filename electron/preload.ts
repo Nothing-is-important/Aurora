@@ -44,6 +44,9 @@ export interface MessageRow {
   reasoning: string
   status: string
   error: string
+  usageJson: string
+  durationMs: number
+  firstTokenMs: number
   createdAt: number
 }
 
@@ -131,6 +134,9 @@ const api = {
         reasoning: string
         status: string
         error?: string
+        usage?: unknown
+        durationMs?: number
+        firstTokenMs?: number
         createdAt: number
       }): Promise<boolean> => ipcRenderer.invoke('messages:upsert', m),
       deleteFrom: (conversationId: string, fromId: string): Promise<boolean> =>
@@ -152,8 +158,12 @@ const api = {
       ipcRenderer.send('chat:stop', requestId),
     onDelta: (cb: (p: { requestId: string; content?: string; reasoning?: string }) => void) =>
       on('chat:delta', cb),
-    onDone: (cb: (p: { requestId: string; aborted: boolean }) => void) =>
-      on('chat:done', cb),
+    onDone: (cb: (p: {
+      requestId: string
+      aborted: boolean
+      durationMs: number
+      firstTokenMs: number
+    }) => void) => on('chat:done', cb),
     onError: (cb: (p: { requestId: string; message: string; aborted: boolean }) => void) =>
       on('chat:error', cb),
     onUsage: (cb: (p: { requestId: string; usage: ChatUsage }) => void) =>

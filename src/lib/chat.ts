@@ -9,6 +9,8 @@ export interface ChatMessage {
   status: 'streaming' | 'done' | 'error'
   error?: string
   usage?: ChatUsage
+  durationMs?: number
+  firstTokenMs?: number
 }
 
 let smokeAutoStarted = false
@@ -77,6 +79,9 @@ export function useChat(opts: UseChatOptions): ChatController {
       reasoning: m.reasoning,
       status: m.status,
       error: m.error,
+      usage: m.usage,
+      durationMs: m.durationMs,
+      firstTokenMs: m.firstTokenMs,
       createdAt: Date.now(),
     })
   }, [])
@@ -118,12 +123,17 @@ export function useChat(opts: UseChatOptions): ChatController {
           return next
         })
       }),
-      window.aurora.chat.onDone(({ requestId }) => {
+      window.aurora.chat.onDone(({ requestId, durationMs, firstTokenMs }) => {
         setMessages((prev) => {
           const idx = prev.findIndex((m) => m.id === requestId)
           if (idx < 0) return prev
           const next = [...prev]
-          next[idx] = { ...next[idx], status: 'done' }
+          next[idx] = {
+            ...next[idx],
+            status: 'done',
+            durationMs,
+            firstTokenMs,
+          }
           flushMessage(next[idx])
           return next
         })
@@ -194,6 +204,9 @@ export function useChat(opts: UseChatOptions): ChatController {
         // 重启后残留的 streaming 记录视为 done（无法续流）
         status: (r.status === 'error' ? 'error' : 'done') as ChatMessage['status'],
         error: r.error || undefined,
+        usage: r.usageJson ? (JSON.parse(r.usageJson) as ChatUsage) : undefined,
+        durationMs: r.durationMs || undefined,
+        firstTokenMs: r.firstTokenMs || undefined,
       }))
       smokeLog('load', { n: msgs.length, ids: msgs.map((m) => m.id.slice(0, 6)) })
       setMessages(msgs)

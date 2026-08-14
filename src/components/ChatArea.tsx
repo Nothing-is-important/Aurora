@@ -18,6 +18,8 @@ import {
 } from 'lucide-react'
 import type { ChatController, ChatMessage } from '../lib/chat'
 import type { PickedFile } from '../lib/ipc'
+import { estimateCost, formatCost, pricingFor } from '../lib/pricing'
+import type { ModelPricing } from '../lib/pricing'
 import { Markdown } from './Markdown'
 
 const SUGGESTIONS = [
@@ -33,8 +35,15 @@ function Cursor() {
   )
 }
 
-function AssistantBubble({ m }: { m: ChatMessage }) {
+function AssistantBubble({
+  m,
+  pricing,
+}: {
+  m: ChatMessage
+  pricing: ModelPricing
+}) {
   const reasoningActive = m.status === 'streaming' && m.content === ''
+  const cost = estimateCost(m.usage, pricing)
   return (
     <div className="glass-strong w-full rounded-[22px] rounded-bl-md px-4 py-3 text-[14px] leading-relaxed text-black/80 shadow-soft dark:text-white/85">
       {m.reasoning !== '' && (
@@ -78,6 +87,21 @@ function AssistantBubble({ m }: { m: ChatMessage }) {
         >
           <AlertCircle size={14} strokeWidth={2.2} className="mt-0.5 shrink-0" />
           <span className="select-text break-all">{m.error}</span>
+        </div>
+      )}
+      {m.usage && m.status === 'done' && (
+        <div
+          data-usage
+          className="mt-2 flex flex-wrap items-center gap-x-2.5 gap-y-0.5 border-t border-black/[0.05] pt-2 text-[10.5px] tabular-nums text-black/35 dark:border-white/[0.06] dark:text-white/35"
+        >
+          <span>{m.usage.total_tokens ?? 0} tokens</span>
+          {m.firstTokenMs != null && (
+            <span>首字 {m.firstTokenMs}ms</span>
+          )}
+          {m.durationMs != null && (
+            <span>耗时 {(m.durationMs / 1000).toFixed(1)}s</span>
+          )}
+          {cost > 0 && <span>{formatCost(cost)}</span>}
         </div>
       )}
     </div>
@@ -152,6 +176,7 @@ export default function ChatArea({ chat, settingsOpen, onSmokePhase2Done }: Chat
 
   const activeModel = models.find((m) => m.id === modelId)
   const isStreaming = streamingId !== null
+  const pricing = pricingFor(activeModel)
 
   useEffect(() => {
     const sc = scrollRef.current
@@ -429,7 +454,7 @@ export default function ChatArea({ chat, settingsOpen, onSmokePhase2Done }: Chat
                   data-role="assistant"
                   className="group relative animate-slideUp flex justify-start"
                 >
-                  <AssistantBubble m={m} />
+                  <AssistantBubble m={m} pricing={pricing} />
                   {m.status !== 'streaming' && (
                     <MsgToolbar>
                       <ToolbarBtn

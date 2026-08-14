@@ -3,12 +3,15 @@ import {
   Check,
   FileJson,
   FileText,
+  Gauge,
   Info,
   Link2,
   PanelRightClose,
   Wrench,
 } from 'lucide-react'
-import type { ConversationRow } from '../lib/ipc'
+import type { ConversationRow, ModelConfig } from '../lib/ipc'
+import type { ChatMessage } from '../lib/chat'
+import { estimateCost, formatCost, pricingFor } from '../lib/pricing'
 
 type Tab = 'tools' | 'refs' | 'info'
 
@@ -36,6 +39,8 @@ const EMPTY: Record<Tab, { title: string; desc: string }> = {
 interface InspectorPanelProps {
   conversation: ConversationRow | null
   messageCount: number
+  messages: ChatMessage[]
+  activeModel: ModelConfig | undefined
 }
 
 function formatDate(ts: number): string {
@@ -46,6 +51,8 @@ function formatDate(ts: number): string {
 export default function InspectorPanel({
   conversation,
   messageCount,
+  messages,
+  activeModel,
 }: InspectorPanelProps) {
   const [tab, setTab] = useState<Tab>('tools')
   const [open, setOpen] = useState(true)
@@ -103,6 +110,50 @@ export default function InspectorPanel({
 
       {tab === 'info' && conversation ? (
         <div className="flex-1 space-y-4 overflow-y-auto px-4 py-4">
+          {/* 用量总览 */}
+          <div data-usage-summary className="rounded-2xl bg-black/[0.04] p-3.5 dark:bg-white/[0.06]">
+            <p className="mb-2.5 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-black/35 dark:text-white/30">
+              <Gauge size={12} strokeWidth={2.2} />
+              用量总览
+            </p>
+            {(() => {
+              const totalPrompt = messages.reduce(
+                (s, m) => s + (m.usage?.prompt_tokens ?? 0),
+                0,
+              )
+              const totalCompletion = messages.reduce(
+                (s, m) => s + (m.usage?.completion_tokens ?? 0),
+                0,
+              )
+              const total = totalPrompt + totalCompletion
+              const cost = estimateCost(
+                {
+                  prompt_tokens: totalPrompt,
+                  completion_tokens: totalCompletion,
+                  total_tokens: total,
+                },
+                pricingFor(activeModel),
+              )
+              return (
+                <div className="grid grid-cols-2 gap-2">
+                  {[
+                    ['Tokens', `${total}`],
+                    ['输入 / 输出', `${totalPrompt} / ${totalCompletion}`],
+                    ['消息数', `${messageCount}`],
+                    ['费用', formatCost(cost)],
+                  ].map(([k, v]) => (
+                    <div key={k} className="rounded-xl bg-white/60 px-2.5 py-2 dark:bg-white/[0.05]">
+                      <p className="text-[10px] text-black/35 dark:text-white/35">{k}</p>
+                      <p className="mt-0.5 text-[13px] font-semibold tabular-nums text-black/75 dark:text-white/80">
+                        {v}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              )
+            })()}
+          </div>
+
           <div>
             <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-black/35 dark:text-white/30">
               会话
@@ -114,6 +165,7 @@ export default function InspectorPanel({
           <div className="space-y-2">
             {[
               ['消息数', `${messageCount} 条`],
+              ['模型', activeModel?.name ?? '—'],
               ['创建时间', formatDate(conversation.createdAt)],
               ['最近活动', formatDate(conversation.updatedAt)],
               ['置顶', conversation.pinned ? '是' : '否'],

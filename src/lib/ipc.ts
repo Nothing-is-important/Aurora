@@ -42,6 +42,9 @@ export interface MessageRow {
   reasoning: string
   status: string
   error: string
+  usageJson: string
+  durationMs: number
+  firstTokenMs: number
   createdAt: number
 }
 
@@ -105,6 +108,9 @@ export interface AuroraApi {
         reasoning: string
         status: string
         error?: string
+        usage?: unknown
+        durationMs?: number
+        firstTokenMs?: number
         createdAt: number
       }) => Promise<boolean>
       deleteFrom: (conversationId: string, fromId: string) => Promise<boolean>
@@ -121,7 +127,12 @@ export interface AuroraApi {
     start: (req: ChatStartRequest) => void
     stop: (requestId: string) => void
     onDelta: (cb: (p: { requestId: string; content?: string; reasoning?: string }) => void) => () => void
-    onDone: (cb: (p: { requestId: string; aborted: boolean }) => void) => () => void
+    onDone: (cb: (p: {
+      requestId: string
+      aborted: boolean
+      durationMs: number
+      firstTokenMs: number
+    }) => void) => () => void
     onError: (cb: (p: { requestId: string; message: string; aborted: boolean }) => void) => () => void
     onUsage: (cb: (p: { requestId: string; usage: ChatUsage }) => void) => () => void
   }

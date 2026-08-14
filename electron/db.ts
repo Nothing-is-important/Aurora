@@ -107,15 +107,24 @@ function migrate(): void {
       reasoning TEXT NOT NULL DEFAULT '',
       status TEXT NOT NULL DEFAULT 'done',
       error TEXT NOT NULL DEFAULT '',
+      usage_json TEXT NOT NULL DEFAULT '',
+      duration_ms INTEGER NOT NULL DEFAULT 0,
+      first_token_ms INTEGER NOT NULL DEFAULT 0,
       created_at INTEGER NOT NULL
     );
   `)
-  // 旧库补 error 列
-  try {
-    db.run(`ALTER TABLE messages ADD COLUMN error TEXT NOT NULL DEFAULT ''`)
-  } catch {
-    /* 已存在则忽略 */
+  // 旧库补列
+  const alt = (sql: string): void => {
+    try {
+      db!.run(sql)
+    } catch {
+      /* 已存在则忽略 */
+    }
   }
+  alt(`ALTER TABLE messages ADD COLUMN error TEXT NOT NULL DEFAULT ''`)
+  alt(`ALTER TABLE messages ADD COLUMN usage_json TEXT NOT NULL DEFAULT ''`)
+  alt(`ALTER TABLE messages ADD COLUMN duration_ms INTEGER NOT NULL DEFAULT 0`)
+  alt(`ALTER TABLE messages ADD COLUMN first_token_ms INTEGER NOT NULL DEFAULT 0`)
 }
 
 function seed(): void {
@@ -302,6 +311,9 @@ export interface MessageRow {
   reasoning: string
   status: string
   error: string
+  usageJson: string
+  durationMs: number
+  firstTokenMs: number
   createdAt: number
 }
 
@@ -316,14 +328,18 @@ function rowToMsg(row: MsgRow): MessageRow {
     reasoning: String(row[4]),
     status: String(row[5]),
     error: String(row[6]),
-    createdAt: Number(row[7]),
+    usageJson: String(row[7]),
+    durationMs: Number(row[8]),
+    firstTokenMs: Number(row[9]),
+    createdAt: Number(row[10]),
   }
 }
 
 export function listMessages(conversationId: string): MessageRow[] {
   if (!db) return []
   const res = db.exec(
-    `SELECT id,conversation_id,role,content,reasoning,status,error,created_at
+    `SELECT id,conversation_id,role,content,reasoning,status,error,
+            usage_json,duration_ms,first_token_ms,created_at
      FROM messages WHERE conversation_id = ? ORDER BY created_at, rowid`,
     [conversationId],
   )
@@ -339,18 +355,29 @@ export function upsertMessage(m: {
   reasoning: string
   status: string
   error?: string
+  usage?: unknown
+  durationMs?: number
+  firstTokenMs?: number
   createdAt: number
 }): void {
   if (!db) return
   db.run(
-    `INSERT INTO messages (id,conversation_id,role,content,reasoning,status,error,created_at)
-     VALUES (?,?,?,?,?,?,?,?)
+    `INSERT INTO messages
+       (id,conversation_id,role,content,reasoning,status,error,
+        usage_json,duration_ms,first_token_ms,created_at)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?)
      ON CONFLICT(id) DO UPDATE SET
        content=excluded.content, reasoning=excluded.reasoning,
-       status=excluded.status, error=excluded.error`,
+       status=excluded.status, error=excluded.error,
+       usage_json=excluded.usage_json, duration_ms=excluded.duration_ms,
+       first_token_ms=excluded.first_token_ms`,
     [
       m.id, m.conversationId, m.role, m.content, m.reasoning, m.status,
-      m.error ?? '', m.createdAt,
+      m.error ?? '',
+      m.usage ? JSON.stringify(m.usage) : '',
+      m.durationMs ?? 0,
+      m.firstTokenMs ?? 0,
+      m.createdAt,
     ],
   )
   db.run('UPDATE conversations SET updated_at = ? WHERE id = ?', [
