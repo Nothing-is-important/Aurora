@@ -4,7 +4,8 @@ import Sidebar from './components/Sidebar'
 import ChatArea from './components/ChatArea'
 import InspectorPanel from './components/InspectorPanel'
 import SettingsModal from './components/SettingsModal'
-import { ThemeProvider } from './lib/theme'
+import CommandPalette from './components/CommandPalette'
+import { ThemeProvider, useTheme } from './lib/theme'
 import { useChat } from './lib/chat'
 import type { ConversationRow } from './lib/ipc'
 
@@ -24,9 +25,11 @@ function waitFor(cond: () => boolean, timeoutMs = 4000): Promise<boolean> {
 }
 
 function AppInner() {
+  const { cycle: cycleTheme } = useTheme()
   const [conversations, setConversations] = useState<ConversationRow[]>([])
   const [activeId, setActiveId] = useState<string | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [paletteOpen, setPaletteOpen] = useState(false)
   const messagesRef = useRef<unknown[]>([])
   /** 刚创建的会话跳过 load（send 会自行追加状态，避免读到半成品落库） */
   const skipLoadRef = useRef(false)
@@ -134,6 +137,32 @@ function AppInner() {
     [reloadConversations],
   )
 
+  // ---- 快捷键 ----
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      const mod = e.ctrlKey || e.metaKey
+      if (!mod) return
+      const key = e.key.toLowerCase()
+      if (key === 'k') {
+        e.preventDefault()
+        setPaletteOpen((v) => !v)
+      } else if (key === 'n') {
+        e.preventDefault()
+        setActiveId(null)
+      } else if (key === ',') {
+        e.preventDefault()
+        setSettingsOpen((v) => !v)
+      } else if (/^[1-9]$/.test(key)) {
+        e.preventDefault()
+        const idx = Number(key) - 1
+        const conv = conversations[idx]
+        if (conv) setActiveId(conv.id)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [conversations])
+
   const activeConv = conversations.find((c) => c.id === activeId) ?? null
 
   return (
@@ -166,6 +195,19 @@ function AppInner() {
         models={chat.models}
         onClose={() => setSettingsOpen(false)}
         onChanged={() => void chat.reloadModels()}
+      />
+
+      <CommandPalette
+        open={paletteOpen}
+        conversations={conversations}
+        models={chat.models}
+        modelId={chat.modelId}
+        onClose={() => setPaletteOpen(false)}
+        onNewChat={() => setActiveId(null)}
+        onOpenSettings={() => setSettingsOpen(true)}
+        onCycleTheme={cycleTheme}
+        onSelectConversation={(id) => setActiveId(id)}
+        onSelectModel={(id) => chat.setModelId(id)}
       />
     </div>
   )

@@ -1,4 +1,11 @@
-import { app, BrowserWindow, dialog, ipcMain, nativeTheme } from 'electron'
+import {
+  app,
+  BrowserWindow,
+  dialog,
+  globalShortcut,
+  ipcMain,
+  nativeTheme,
+} from 'electron'
 import type { NativeImage } from 'electron'
 import * as path from 'path'
 import * as fs from 'fs'
@@ -199,6 +206,29 @@ const DOM_AUDIT = `
   if (closeSettings) closeSettings.click()
   await sleep(350)
   out.settingsClosed = !document.querySelector('[data-settings]')
+
+  // 命令面板：Ctrl+K 打开 → 输入过滤 → Esc 关闭
+  window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true, bubbles: true }))
+  await sleep(400)
+  out.paletteOpen = !!document.querySelector('[data-command-palette]')
+  out.paletteItems = document.querySelectorAll('[data-palette-item]').length
+  const q = document.querySelector('[data-palette-input]')
+  if (q) {
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set
+    setter.call(q, '冒烟')
+    q.dispatchEvent(new Event('input', { bubbles: true }))
+  }
+  await sleep(300)
+  out.paletteFiltered = document.querySelectorAll('[data-palette-item]').length
+  window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+  await sleep(300)
+  out.paletteClosed = !document.querySelector('[data-command-palette]')
+
+  // Ctrl+N 新对话（清空消息区）
+  window.dispatchEvent(new KeyboardEvent('keydown', { key: 'n', ctrlKey: true, bubbles: true }))
+  await sleep(400)
+  out.ctrlNCleared = document.querySelectorAll('[data-role]').length === 0
+  out.ctrlNActiveNull = !document.querySelector('[data-conv-item][data-active="true"]')
   return out
 })()
 `
@@ -261,6 +291,7 @@ async function runSmoke(w: BrowserWindow, errors: string[]): Promise<void> {
   fs.writeFileSync(path.join(shotsDir, 'smoke-dark.png'), dark.toPNG())
   const darkStats = sampleStats(dark, { x: 0, y: 0, w: 1280, h: 820 })
   report.darkMeanLum = +darkStats.mean.toFixed(3)
+  report.globalShortcut = globalShortcut.isRegistered('CommandOrControl+Shift+A')
 
   // DOM 审计
   const dom = (await w.webContents.executeJavaScript(DOM_AUDIT, true)) as Record<
@@ -353,6 +384,16 @@ async function runSmoke(w: BrowserWindow, errors: string[]): Promise<void> {
   if (dom.settingsClosed !== true) failures.push('设置弹窗未关闭')
   // 附件按钮
   if (dom.attachBtn !== true) failures.push('附件按钮缺失')
+  // 命令面板与快捷键断言
+  if (dom.paletteOpen !== true) failures.push('命令面板未打开')
+  if (dom.paletteItems < 5) failures.push(`命令面板条目过少: ${dom.paletteItems}`)
+  if (dom.paletteFiltered < 1 || dom.paletteFiltered > 2)
+    failures.push(`命令面板过滤异常: ${dom.paletteFiltered}`)
+  if (dom.paletteClosed !== true) failures.push('命令面板 Esc 未关闭')
+  if (dom.ctrlNCleared !== true) failures.push('Ctrl+N 未清空消息')
+  if (dom.ctrlNActiveNull !== true) failures.push('Ctrl+N 后激活会话未清除')
+  if (report.globalShortcut !== true)
+    failures.push(`全局快捷键未注册: ${report.globalShortcut}`)
   if (errors.length > 0) failures.push('控制台错误: ' + errors.join(' | '))
 
   console.log('[SMOKE] report: ' + JSON.stringify(report, null, 2))
@@ -521,6 +562,20 @@ app.whenReady().then(async () => {
   bootLog('chat ipc registered')
   createWindow()
   bootLog('window created')
+
+  // 全局唤起：Ctrl+Shift+A 显示/隐藏窗口
+  const registered = globalShortcut.register('CommandOrControl+Shift+A', () => {
+    if (!win) return
+    if (win.isFocused()) {
+      win.minimize()
+    } else {
+      if (win.isMinimized()) win.restore()
+      win.show()
+      win.focus()
+    }
+  })
+  if (!registered) bootLog('globalShortcut register failed')
+
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
@@ -531,5 +586,6 @@ app.on('window-all-closed', () => {
 })
 
 app.on('will-quit', () => {
+  globalShortcut.unregisterAll()
   closeDb()
 })

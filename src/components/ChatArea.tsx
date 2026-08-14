@@ -131,22 +131,28 @@ export default function ChatArea({ chat, settingsOpen, onSmokePhase2Done }: Chat
   // ---- 冒烟第二阶段：中途停止验证 ----
   const phase2 = useRef(false)
   const phase2StopClicked = useRef(false)
+  const phase2Verified = useRef(false)
 
   useEffect(() => {
     if (!window.aurora.smoke || phase2.current) return
     const allDone = messages.length >= 2 && messages.every((m) => m.status !== 'streaming')
     if (!allDone) return
     phase2.current = true
-    setTimeout(() => send('第二次冒烟：测试停止生成功能'), 500)
     setTimeout(() => {
-      phase2StopClicked.current = true
-      stop()
-    }, 1300)
+      send('第二次冒烟：测试停止生成功能')
+      // 停止计时器相对 send 触发，避免负载抖动下打在空流上
+      setTimeout(() => {
+        phase2StopClicked.current = true
+        stop()
+      }, 400)
+    }, 500)
   }, [messages, send, stop])
 
   useEffect(() => {
     if (!window.aurora.smoke || !phase2.current || !phase2StopClicked.current) return
+    if (phase2Verified.current) return
     if (streamingId !== null) return
+    phase2Verified.current = true
     const lastAsst = [...messages].reverse().find((m) => m.role === 'assistant')
     const stoppedEarly = !!lastAsst && lastAsst.content.length < 400
     const errored = lastAsst?.status === 'error'
