@@ -1,5 +1,16 @@
 # Aurora 变更日志
 
+## 第 4 轮 · 设置中心 + 附件 + 打包 ✅（进行中）
+
+- **设置中心弹窗**（苹果风双栏）：模型列表 + 编辑表单（名称/提供方/Base URL/API Key/模型 ID/温度/Max Tokens/Top P/启用开关）
+- 支持添加/删除自定义模型、**连接测试**（请求 `/models` 端点，8 秒超时，返回端点模型数）
+- API Key 密码框可显示切换，DPAPI 加密存储
+- **附件**：文件选择对话框（图片/文本/代码类型识别）、输入区缩略图/文件芯片、删除
+- 图片附件以 `image_url` 多模态部分发送（仅 OpenAI 兼容端点，DeepSeek 官方不支持视觉）；文本附件内联进上下文（<200KB）
+- 依赖瘦身：渲染层依赖全部走 Vite 打包，运行时仅 sql.js → 减小安装包
+- 应用图标：System.Drawing 生成渐变星芒 icon（512px）
+- electron-builder NSIS 打包配置（非 oneClick、可选安装目录、桌面/开始菜单快捷方式）
+
 ## 第 3 轮 · 会话管理 ✅（完成）
 
 - **数据层**：会话/消息 CRUD（conversations/messages 表），消息 upsert 自动刷新会话 updated_at，旧库 error 列迁移

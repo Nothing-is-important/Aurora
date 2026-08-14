@@ -10,8 +10,10 @@ import {
   Paperclip,
   Sparkles,
   Square,
+  X,
 } from 'lucide-react'
 import type { ChatController, ChatMessage } from '../lib/chat'
+import type { PickedFile } from '../lib/ipc'
 import { Markdown } from './Markdown'
 
 const SUGGESTIONS = [
@@ -78,6 +80,12 @@ function AssistantBubble({ m }: { m: ChatMessage }) {
   )
 }
 
+function formatSize(n: number): string {
+  if (n < 1024) return `${n} B`
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
+  return `${(n / 1024 / 1024).toFixed(1)} MB`
+}
+
 interface ChatAreaProps {
   chat: ChatController
   settingsOpen: boolean
@@ -96,6 +104,7 @@ export default function ChatArea({ chat, settingsOpen, onSmokePhase2Done }: Chat
   } = chat
   const [input, setInput] = useState('')
   const [menuOpen, setMenuOpen] = useState(false)
+  const [attachments, setAttachments] = useState<PickedFile[]>([])
   const taRef = useRef<HTMLTextAreaElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
@@ -154,10 +163,20 @@ export default function ChatArea({ chat, settingsOpen, onSmokePhase2Done }: Chat
 
   const canSend = input.trim().length > 0 && !isStreaming
 
+  const pickFiles = async (): Promise<void> => {
+    const files = await window.aurora.dialog.pickFiles()
+    if (files.length === 0) return
+    setAttachments((prev) => {
+      const seen = new Set(prev.map((f) => f.path))
+      return [...prev, ...files.filter((f) => !seen.has(f.path))]
+    })
+  }
+
   const doSend = (): void => {
     if (!canSend) return
-    send(input)
+    send(input, undefined, attachments)
     setInput('')
+    setAttachments([])
     if (taRef.current) taRef.current.style.height = 'auto'
   }
 
@@ -294,10 +313,55 @@ export default function ChatArea({ chat, settingsOpen, onSmokePhase2Done }: Chat
       {/* 输入区 */}
       <div className="px-4 pb-4">
         <div className="mx-auto w-full max-w-[780px]">
-          <div className="glass-strong flex items-end gap-1 rounded-[26px] p-2 shadow-glass transition-shadow focus-within:ring-1 focus-within:ring-apple-blue/40">
-            <button className="mb-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-black/40 transition-colors hover:bg-black/[0.05] hover:text-black/70 dark:text-white/40 dark:hover:bg-white/[0.08] dark:hover:text-white/75">
-              <Paperclip size={17} strokeWidth={2} />
-            </button>
+          <div className="glass-strong rounded-[26px] p-2 shadow-glass transition-shadow focus-within:ring-1 focus-within:ring-apple-blue/40">
+            {attachments.length > 0 && (
+              <div className="flex flex-wrap gap-2 px-1.5 pb-2 pt-1">
+                {attachments.map((a) => (
+                  <div
+                    key={a.path}
+                    data-attachment
+                    className="group/att relative flex items-center gap-2 rounded-xl bg-black/[0.04] py-1 pl-1 pr-2 dark:bg-white/[0.07]"
+                  >
+                    {a.isImage && a.dataUrl ? (
+                      <img
+                        src={a.dataUrl}
+                        alt={a.name}
+                        className="h-9 w-9 rounded-lg object-cover"
+                      />
+                    ) : (
+                      <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-apple-blue/10 text-apple-blue">
+                        <FileText size={15} strokeWidth={2} />
+                      </span>
+                    )}
+                    <span className="min-w-0">
+                      <span className="block max-w-[180px] truncate text-[12px] font-medium text-black/75 dark:text-white/80">
+                        {a.name}
+                      </span>
+                      <span className="block text-[10.5px] text-black/35 dark:text-white/35">
+                        {formatSize(a.size)}
+                      </span>
+                    </span>
+                    <button
+                      onClick={() =>
+                        setAttachments((prev) => prev.filter((f) => f.path !== a.path))
+                      }
+                      className="ml-0.5 flex h-5 w-5 items-center justify-center rounded-full text-black/35 transition-colors hover:bg-black/[0.08] hover:text-black/70 dark:text-white/35 dark:hover:bg-white/[0.12] dark:hover:text-white/75"
+                    >
+                      <X size={11} strokeWidth={2.6} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="flex items-end gap-1">
+              <button
+                data-attach
+                onClick={() => void pickFiles()}
+                title="添加附件"
+                className="mb-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-black/40 transition-colors hover:bg-black/[0.05] hover:text-black/70 dark:text-white/40 dark:hover:bg-white/[0.08] dark:hover:text-white/75"
+              >
+                <Paperclip size={17} strokeWidth={2} />
+              </button>
             <textarea
               ref={taRef}
               rows={1}
@@ -337,6 +401,7 @@ export default function ChatArea({ chat, settingsOpen, onSmokePhase2Done }: Chat
                 <ArrowUp size={16} strokeWidth={2.5} />
               </button>
             )}
+            </div>
           </div>
           <p className="mt-2 text-center text-[11px] text-black/30 dark:text-white/30">
             Aurora 可能会犯错，请核查重要信息

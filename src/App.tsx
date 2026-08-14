@@ -3,6 +3,7 @@ import TitleBar from './components/TitleBar'
 import Sidebar from './components/Sidebar'
 import ChatArea from './components/ChatArea'
 import InspectorPanel from './components/InspectorPanel'
+import SettingsModal from './components/SettingsModal'
 import { ThemeProvider } from './lib/theme'
 import { useChat } from './lib/chat'
 import type { ConversationRow } from './lib/ipc'
@@ -159,6 +160,13 @@ function AppInner() {
         />
         <InspectorPanel />
       </div>
+
+      <SettingsModal
+        open={settingsOpen}
+        models={chat.models}
+        onClose={() => setSettingsOpen(false)}
+        onChanged={() => void chat.reloadModels()}
+      />
     </div>
   )
 }

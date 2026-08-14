@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, nativeTheme } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, nativeTheme } from 'electron'
 import type { NativeImage } from 'electron'
 import * as path from 'path'
 import * as fs from 'fs'
@@ -123,14 +123,15 @@ function countNearColor(
 }
 
 const DOM_AUDIT = `
-;(() => {
+;(async () => {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
   const rect = (el) => {
     if (!el) return null
     const r = el.getBoundingClientRect()
     return { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) }
   }
   const asides = document.querySelectorAll('aside')
-  return {
+  const out = {
     root: !!document.getElementById('root'),
     darkClass: document.documentElement.classList.contains('dark'),
     overflowX: document.body.scrollWidth > document.body.clientWidth,
@@ -160,10 +161,26 @@ const DOM_AUDIT = `
     activeConv: (document.querySelector('[data-conv-item][data-active="true"]') || {}).textContent || '',
     convSearch: !!document.querySelector('[data-conv-search]'),
     titlebarTitle: (document.querySelector('[data-titlebar-title]') || {}).textContent || '',
+    attachBtn: !!document.querySelector('[data-attach]'),
     sendBtn: !!document.querySelector('button[aria-label="发送"]'),
     newChatBtn: !!document.querySelector('button[aria-label="新对话"]'),
     suggestionChips: document.querySelectorAll('[data-suggestion]').length,
   }
+  // 设置弹窗开关验证
+  const settingsBtn = document.querySelector('button[title="设置"]')
+  if (settingsBtn) settingsBtn.click()
+  await sleep(450)
+  out.settingsOpen = !!document.querySelector('[data-settings]')
+  out.settingsModelRows = document.querySelectorAll('[data-settings-model]').length
+  out.settingsNameInput = !!document.querySelector('[data-settings-name]')
+  out.settingsBaseUrlInput = !!document.querySelector('[data-settings-baseurl]')
+  out.settingsApiKeyInput = !!document.querySelector('[data-settings-apikey]')
+  out.settingsModelIdInput = !!document.querySelector('[data-settings-modelid]')
+  const closeSettings = document.querySelector('button[aria-label="关闭设置"]')
+  if (closeSettings) closeSettings.click()
+  await sleep(350)
+  out.settingsClosed = !document.querySelector('[data-settings]')
+  return out
 })()
 `
 
@@ -300,6 +317,19 @@ async function runSmoke(w: BrowserWindow, errors: string[]): Promise<void> {
   if (dom.convSearch !== true) failures.push('会话搜索框缺失')
   if (!String(dom.titlebarTitle).startsWith('冒烟测试'))
     failures.push(`标题栏标题异常: ${dom.titlebarTitle}`)
+  // 设置弹窗断言
+  if (dom.settingsOpen !== true) failures.push('设置弹窗未打开')
+  if (dom.settingsModelRows < 3) failures.push(`设置模型列表数量异常: ${dom.settingsModelRows}`)
+  if (
+    dom.settingsNameInput !== true ||
+    dom.settingsBaseUrlInput !== true ||
+    dom.settingsApiKeyInput !== true ||
+    dom.settingsModelIdInput !== true
+  )
+    failures.push('设置表单字段缺失')
+  if (dom.settingsClosed !== true) failures.push('设置弹窗未关闭')
+  // 附件按钮
+  if (dom.attachBtn !== true) failures.push('附件按钮缺失')
   if (errors.length > 0) failures.push('控制台错误: ' + errors.join(' | '))
 
   console.log('[SMOKE] report: ' + JSON.stringify(report, null, 2))
@@ -370,6 +400,89 @@ ipcMain.handle('messages:list', (_e, conversationId: string) =>
 ipcMain.handle('messages:upsert', (_e, m) => {
   upsertMessage(m)
   return true
+})
+
+// ---- 文件选择 ----
+const IMAGE_EXT = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp']
+const TEXT_EXT = [
+  '.txt', '.md', '.markdown', '.json', '.csv', '.py', '.js', '.ts', '.tsx',
+  '.jsx', '.css', '.scss', '.html', '.xml', '.yml', '.yaml', '.log', '.sh',
+  '.c', '.h', '.cpp', '.java', '.go', '.rs', '.sql', '.ini', '.toml',
+]
+const MIME: Record<string, string> = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.bmp': 'image/bmp',
+}
+
+ipcMain.handle('dialog:pickFiles', async () => {
+  if (!win) return []
+  const res = await dialog.showOpenDialog(win, {
+    title: '选择附件',
+    properties: ['openFile', 'multiSelections'],
+    filters: [
+      { name: '图片', extensions: IMAGE_EXT.map((e) => e.slice(1)) },
+      { name: '文本与代码', extensions: TEXT_EXT.map((e) => e.slice(1)) },
+      { name: '所有文件', extensions: ['*'] },
+    ],
+  })
+  if (res.canceled) return []
+  return res.filePaths.map((fp) => {
+    const stat = fs.statSync(fp)
+    const ext = path.extname(fp).toLowerCase()
+    const isImage = IMAGE_EXT.includes(ext)
+    const isText = TEXT_EXT.includes(ext)
+    const out: Record<string, unknown> = {
+      name: path.basename(fp),
+      path: fp,
+      size: stat.size,
+      mime: MIME[ext] ?? 'application/octet-stream',
+      isImage,
+      isText,
+    }
+    if (isImage) {
+      out.dataUrl = `data:${MIME[ext]};base64,${fs
+        .readFileSync(fp)
+        .toString('base64')}`
+    }
+    if (isText && stat.size < 200 * 1024) {
+      out.content = fs.readFileSync(fp, 'utf-8')
+    }
+    return out
+  })
+})
+
+// ---- 模型连接测试 ----
+ipcMain.handle('models:test', async (_e, m) => {
+  try {
+    const ac = new AbortController()
+    const timer = setTimeout(() => ac.abort(), 8000)
+    const url = `${String(m.baseUrl).replace(/\/+$/, '')}/models`
+    const res = await fetch(url, {
+      headers: { Authorization: `Bearer ${m.apiKey}` },
+      signal: ac.signal,
+    })
+    clearTimeout(timer)
+    if (res.ok) {
+      const j = (await res.json().catch(() => null)) as {
+        data?: unknown[]
+      } | null
+      return {
+        ok: true,
+        models: Array.isArray(j?.data) ? j.data.length : null,
+      }
+    }
+    return { ok: false, message: `HTTP ${res.status}` }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    if (msg.toLowerCase().includes('abort')) {
+      return { ok: false, message: '连接超时（8 秒）' }
+    }
+    return { ok: false, message: msg.slice(0, 200) }
+  }
 })
 
 app.whenReady().then(async () => {

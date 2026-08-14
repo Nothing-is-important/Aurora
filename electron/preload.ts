@@ -47,6 +47,23 @@ export interface MessageRow {
   createdAt: number
 }
 
+export interface PickedFile {
+  name: string
+  path: string
+  size: number
+  mime: string
+  isImage: boolean
+  isText: boolean
+  dataUrl?: string
+  content?: string
+}
+
+export interface ConnectionTestResult {
+  ok: boolean
+  message?: string
+  models?: number | null
+}
+
 function on<T>(channel: string, cb: (payload: T) => void): () => void {
   const listener = (_e: unknown, payload: T): void => cb(payload)
   ipcRenderer.on(channel, listener)
@@ -80,6 +97,11 @@ const api = {
     save: (m: ModelConfig): Promise<boolean> => ipcRenderer.invoke('models:save', m),
     remove: (id: string): Promise<boolean> =>
       ipcRenderer.invoke('models:delete', id),
+    test: (m: ModelConfig): Promise<ConnectionTestResult> =>
+      ipcRenderer.invoke('models:test', m),
+  },
+  dialog: {
+    pickFiles: (): Promise<PickedFile[]> => ipcRenderer.invoke('dialog:pickFiles'),
   },
   settings: {
     get: (key: string): Promise<string | null> =>

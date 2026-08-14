@@ -45,6 +45,23 @@ export interface MessageRow {
   createdAt: number
 }
 
+export interface PickedFile {
+  name: string
+  path: string
+  size: number
+  mime: string
+  isImage: boolean
+  isText: boolean
+  dataUrl?: string
+  content?: string
+}
+
+export interface ConnectionTestResult {
+  ok: boolean
+  message?: string
+  models?: number | null
+}
+
 export interface AuroraApi {
   smoke: boolean
   window: {
@@ -63,6 +80,10 @@ export interface AuroraApi {
     list: () => Promise<ModelConfig[]>
     save: (m: ModelConfig) => Promise<boolean>
     remove: (id: string) => Promise<boolean>
+    test: (m: ModelConfig) => Promise<ConnectionTestResult>
+  }
+  dialog: {
+    pickFiles: () => Promise<PickedFile[]>
   }
   settings: {
     get: (key: string) => Promise<string | null>

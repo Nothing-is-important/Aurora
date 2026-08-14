@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { ChatUsage, ModelConfig } from './ipc'
+import type { ChatUsage, ModelConfig, PickedFile } from './ipc'
 
 export interface ChatMessage {
   id: string
@@ -19,8 +19,9 @@ export interface ChatController {
   models: ModelConfig[]
   modelId: string
   setModelId: (id: string) => void
+  reloadModels: () => Promise<void>
   streamingId: string | null
-  send: (text: string) => void
+  send: (text: string, forceModelId?: string, attachments?: PickedFile[]) => void
   stop: () => void
   loadConversation: (conversationId: string) => Promise<void>
   clear: () => void
@@ -170,6 +171,11 @@ export function useChat(opts: UseChatOptions): ChatController {
     })
   }, [])
 
+  const reloadModels = useCallback(async () => {
+    const list = await window.aurora.models.list()
+    setModels(list)
+  }, [])
+
   const loadConversation = useCallback(
     async (conversationId: string) => {
       const gen = ++loadGenRef.current
@@ -194,11 +200,13 @@ export function useChat(opts: UseChatOptions): ChatController {
   )
 
   const send = useCallback(
-    (text: string, forceModelId?: string) => {
+    (text: string, forceModelId?: string, attachments?: PickedFile[]) => {
       if (streamingRef.current) return
       const mid = forceModelId ?? modelId
       const trimmed = text.trim()
       if (!trimmed || !mid) return
+      const files = attachments ?? []
+      const model = models.find((m) => m.id === mid)
       if (window.aurora.smoke) {
         const w = window as unknown as { __smokeSends?: string[] }
         w.__smokeSends = [...(w.__smokeSends ?? []), trimmed]
@@ -215,12 +223,42 @@ export function useChat(opts: UseChatOptions): ChatController {
         const apiMessages = messages
           .filter((m) => m.status !== 'error' && m.content !== '')
           .map((m) => ({ role: m.role, content: m.content }))
-        apiMessages.push({ role: 'user', content: trimmed })
+
+        // 本轮用户消息：文本 + 附件内容（文本内联 / 图片多模态）
+        const textFiles = files.filter((f) => f.isText && f.content)
+        const imageFiles = files.filter((f) => f.isImage && f.dataUrl)
+        let userText = trimmed
+        if (textFiles.length > 0) {
+          userText +=
+            '\n\n--- 附件内容 ---\n' +
+            textFiles
+              .map((f) => `《${f.name}》:\n${f.content!.slice(0, 50000)}`)
+              .join('\n\n')
+        }
+        const displayText =
+          files.length > 0
+            ? trimmed + '\n\n' + files.map((f) => `📎 ${f.name}`).join('\n')
+            : trimmed
+
+        let userContent: string | unknown[]
+        // 图片多模态：仅非 DeepSeek 官方端点（官方暂不支持视觉）
+        if (imageFiles.length > 0 && model && model.provider !== 'deepseek') {
+          userContent = [
+            { type: 'text', text: userText },
+            ...imageFiles.map((f) => ({
+              type: 'image_url',
+              image_url: { url: f.dataUrl },
+            })),
+          ]
+        } else {
+          userContent = userText
+        }
+        apiMessages.push({ role: 'user', content: userContent } as never)
 
         const userMsg: ChatMessage = {
           id: crypto.randomUUID(),
           role: 'user',
-          content: trimmed,
+          content: displayText,
           reasoning: '',
           status: 'done',
         }
@@ -267,7 +305,7 @@ export function useChat(opts: UseChatOptions): ChatController {
         })
       })()
     },
-    [messages, modelId],
+    [messages, modelId, models],
   )
 
   // 冒烟模式：模型加载后自动发起 Mock 对话
@@ -299,6 +337,7 @@ export function useChat(opts: UseChatOptions): ChatController {
     models,
     modelId,
     setModelId,
+    reloadModels,
     streamingId,
     send,
     stop,
