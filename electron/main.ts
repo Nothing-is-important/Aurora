@@ -23,6 +23,18 @@ import { registerChatIpc } from './chat'
 const SMOKE = process.env.SMOKE === '1'
 const DEV_URL = process.env.VITE_DEV_SERVER_URL
 
+function bootLog(msg: string): void {
+  if (!SMOKE) return
+  try {
+    fs.appendFileSync(
+      path.join(app.getPath('userData'), 'boot.log'),
+      `[${new Date().toISOString()}] ${msg}\n`,
+    )
+  } catch {
+    /* ignore */
+  }
+}
+
 let win: BrowserWindow | null = null
 
 function createWindow(): void {
@@ -72,7 +84,14 @@ function createWindow(): void {
     void win.loadFile(path.join(__dirname, '../renderer/index.html'))
   }
 
-  if (SMOKE) void runSmoke(win, errors)
+  if (SMOKE) {
+    // 兜底：110 秒未完成强制退出，避免打包版静默挂起
+    setTimeout(() => {
+      bootLog('watchdog: force exit(2)')
+      app.exit(2)
+    }, 110000)
+    void runSmoke(win, errors)
+  }
 }
 
 // ---- 像素审计工具（BGRA）----
@@ -185,7 +204,10 @@ const DOM_AUDIT = `
 `
 
 async function runSmoke(w: BrowserWindow, errors: string[]): Promise<void> {
-  const shotsDir = path.join(__dirname, '../../shots')
+  bootLog('runSmoke start')
+  const shotsDir = app.isPackaged
+    ? path.join(app.getPath('userData'), 'shots')
+    : path.join(__dirname, '../../shots')
   fs.mkdirSync(shotsDir, { recursive: true })
   const failures: string[] = []
   const report: Record<string, unknown> = {}
@@ -213,6 +235,7 @@ async function runSmoke(w: BrowserWindow, errors: string[]): Promise<void> {
     }
   })
   await Promise.race([convDone, new Promise((r) => setTimeout(r, 45000))])
+  bootLog('conv-verified: ' + JSON.stringify(convVerified))
   report.stopVerified = stopVerified
   report.convVerified = convVerified
 
@@ -486,9 +509,18 @@ ipcMain.handle('models:test', async (_e, m) => {
 })
 
 app.whenReady().then(async () => {
-  await initDb({ file: SMOKE ? 'aurora-smoke.db' : 'aurora.db', fresh: SMOKE })
+  bootLog('whenReady')
+  try {
+    await initDb({ file: SMOKE ? 'aurora-smoke.db' : 'aurora.db', fresh: SMOKE })
+    bootLog('initDb ok')
+  } catch (err) {
+    bootLog('initDb failed: ' + String(err))
+    throw err
+  }
   registerChatIpc(listModels)
+  bootLog('chat ipc registered')
   createWindow()
+  bootLog('window created')
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
