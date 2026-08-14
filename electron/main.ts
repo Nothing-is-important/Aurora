@@ -1193,6 +1193,8 @@ ipcMain.handle(
     const conv = listConversations().find((c) => c.id === convId)
     const msgs = listMessages(convId)
     const title = conv?.title ?? '对话'
+    // Windows 文件名非法字符净化，避免保存对话框路径异常
+    const safeTitle = title.replace(/[\\/:*?"<>|]/g, '-').slice(0, 60) || '对话'
     let content: string
     let defaultName: string
     if (format === 'json') {
@@ -1205,7 +1207,7 @@ ipcMain.handle(
         null,
         2,
       )
-      defaultName = `${title}.json`
+      defaultName = `${safeTitle}.json`
     } else {
       const lines = [
         `# ${title}`,
@@ -1223,7 +1225,7 @@ ipcMain.handle(
         lines.push('', m.content, '')
       }
       content = lines.join('\n')
-      defaultName = `${title}.md`
+      defaultName = `${safeTitle}.md`
     }
     // 冒烟模式直接落盘返回内容，避免原生保存对话框
     if (SMOKE) {
