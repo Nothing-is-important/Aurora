@@ -359,6 +359,7 @@ const DOM_AUDIT = `
     convSearch: !!document.querySelector('[data-conv-search]'),
     titlebarTitle: (document.querySelector('[data-titlebar-title]') || {}).textContent || '',
     attachBtn: !!document.querySelector('[data-attach]'),
+    ctxIndicator: (document.querySelector('[data-ctx-indicator]') || {}).textContent || '',
     sendBtn: !!document.querySelector('button[aria-label="发送"]'),
     newChatBtn: !!document.querySelector('button[aria-label="新对话"]'),
     suggestionChips: document.querySelectorAll('[data-suggestion]').length,
@@ -936,6 +937,8 @@ async function runSmoke(w: BrowserWindow, errors: string[]): Promise<void> {
   }
   // 附件按钮
   if (dom.attachBtn !== true) failures.push('附件按钮缺失')
+  if (!String(dom.ctxIndicator).includes('tokens'))
+    failures.push(`上下文指示器缺失: ${dom.ctxIndicator}`)
   // 命令面板与快捷键断言
   if (dom.paletteOpen !== true) failures.push('命令面板未打开')
   if (dom.paletteItems < 5) failures.push(`命令面板条目过少: ${dom.paletteItems}`)

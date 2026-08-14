@@ -35,6 +35,23 @@ const SUGGESTIONS = [
   { icon: Sparkles, text: '头脑风暴新点子' },
 ]
 
+/** 粗略 token 估算（中文约 1.5 字/token，英文约 4 字符/token，取 0.6 系数折中） */
+function estimateTokens(messages: ChatMessage[]): number {
+  const chars = messages.reduce(
+    (s, m) => s + m.content.length + m.reasoning.length,
+    0,
+  )
+  return Math.round(chars * 0.6)
+}
+
+/** 各模型上下文窗口（token） */
+function contextWindow(modelName: string | undefined): number {
+  if (!modelName) return 64000
+  if (modelName.includes('reasoner')) return 64000
+  if (modelName.includes('deepseek-chat')) return 64000
+  return 128000
+}
+
 function Cursor() {
   return (
     <span className="streaming-cursor ml-0.5 inline-block h-[1.05em] w-[7px] translate-y-[0.15em] rounded-[2px] bg-apple-blue" />
@@ -267,6 +284,9 @@ export default function ChatArea({ chat, settingsOpen, onSmokePhase2Done }: Chat
   const activeModel = models.find((m) => m.id === modelId)
   const isStreaming = streamingId !== null
   const pricing = pricingFor(activeModel)
+  const ctxTokens = estimateTokens(messages)
+  const ctxWindow = contextWindow(activeModel?.modelId)
+  const ctxRatio = ctxWindow > 0 ? ctxTokens / ctxWindow : 0
 
   useEffect(() => {
     const sc = scrollRef.current
@@ -752,8 +772,23 @@ export default function ChatArea({ chat, settingsOpen, onSmokePhase2Done }: Chat
             )}
             </div>
           </div>
-          <p className="mt-2 text-center text-[11px] text-black/30 dark:text-white/30">
-            Aurora 可能会犯错，请核查重要信息
+          <p className="mt-2 flex items-center justify-center gap-2 text-center text-[11px] text-black/30 dark:text-white/30">
+            <span>Aurora 可能会犯错，请核查重要信息</span>
+            {messages.length > 0 && (
+              <span
+                data-ctx-indicator
+                className={`tabular-nums ${
+                  ctxRatio > 0.9
+                    ? 'text-apple-red'
+                    : ctxRatio > 0.7
+                      ? 'text-apple-orange'
+                      : ''
+                }`}
+              >
+                上下文 ≈{ctxTokens.toLocaleString()} / {ctxWindow.toLocaleString()} tokens
+                {ctxRatio > 0.7 && `（${Math.round(ctxRatio * 100)}%）`}
+              </span>
+            )}
           </p>
         </div>
       </div>
