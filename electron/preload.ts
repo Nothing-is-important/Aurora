@@ -27,6 +27,26 @@ export interface ChatUsage {
   total_tokens?: number
 }
 
+export interface ConversationRow {
+  id: string
+  title: string
+  modelId: string
+  pinned: boolean
+  createdAt: number
+  updatedAt: number
+}
+
+export interface MessageRow {
+  id: string
+  conversationId: string
+  role: string
+  content: string
+  reasoning: string
+  status: string
+  error: string
+  createdAt: number
+}
+
 function on<T>(channel: string, cb: (payload: T) => void): () => void {
   const listener = (_e: unknown, payload: T): void => cb(payload)
   ipcRenderer.on(channel, listener)
@@ -67,6 +87,32 @@ const api = {
     set: (key: string, value: string): Promise<boolean> =>
       ipcRenderer.invoke('settings:set', key, value),
   },
+  conversations: {
+    list: (): Promise<ConversationRow[]> =>
+      ipcRenderer.invoke('conversations:list'),
+    create: (title: string): Promise<ConversationRow> =>
+      ipcRenderer.invoke('conversations:create', title),
+    rename: (id: string, title: string): Promise<boolean> =>
+      ipcRenderer.invoke('conversations:rename', id, title),
+    remove: (id: string): Promise<boolean> =>
+      ipcRenderer.invoke('conversations:delete', id),
+    setPinned: (id: string, pinned: boolean): Promise<boolean> =>
+      ipcRenderer.invoke('conversations:setPinned', id, pinned),
+    messages: {
+      list: (conversationId: string): Promise<MessageRow[]> =>
+        ipcRenderer.invoke('messages:list', conversationId),
+      upsert: (m: {
+        id: string
+        conversationId: string
+        role: string
+        content: string
+        reasoning: string
+        status: string
+        error?: string
+        createdAt: number
+      }): Promise<boolean> => ipcRenderer.invoke('messages:upsert', m),
+    },
+  },
   chat: {
     start: (req: ChatStartRequest): void => ipcRenderer.send('chat:start', req),
     stop: (requestId: string): void =>
@@ -83,6 +129,12 @@ const api = {
   smokeNotifyChatDone: (): void => ipcRenderer.send('smoke:chat-done'),
   smokeNotifyStopVerified: (p: { stoppedEarly: boolean; errored: boolean }): void =>
     ipcRenderer.send('smoke:stop-verified', p),
+  smokeNotifyConvVerified: (p: {
+    listCount: number
+    firstTitle: string
+    emptyOk: boolean
+    restoredCount: number
+  }): void => ipcRenderer.send('smoke:conv-verified', p),
 }
 
 contextBridge.exposeInMainWorld('aurora', api)

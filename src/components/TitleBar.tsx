@@ -77,7 +77,10 @@ export default function TitleBar({ title }: { title: string }) {
 
       {/* 居中标题 */}
       <div className="pointer-events-none absolute inset-x-0 flex justify-center">
-        <span className="max-w-[46%] truncate text-[13px] font-medium text-black/55 dark:text-white/60">
+        <span
+          data-titlebar-title
+          className="max-w-[46%] truncate text-[13px] font-medium text-black/55 dark:text-white/60"
+        >
           {title}
         </span>
       </div>

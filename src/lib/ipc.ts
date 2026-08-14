@@ -25,6 +25,26 @@ export interface ChatUsage {
   total_tokens?: number
 }
 
+export interface ConversationRow {
+  id: string
+  title: string
+  modelId: string
+  pinned: boolean
+  createdAt: number
+  updatedAt: number
+}
+
+export interface MessageRow {
+  id: string
+  conversationId: string
+  role: string
+  content: string
+  reasoning: string
+  status: string
+  error: string
+  createdAt: number
+}
+
 export interface AuroraApi {
   smoke: boolean
   window: {
@@ -48,6 +68,26 @@ export interface AuroraApi {
     get: (key: string) => Promise<string | null>
     set: (key: string, value: string) => Promise<boolean>
   }
+  conversations: {
+    list: () => Promise<ConversationRow[]>
+    create: (title: string) => Promise<ConversationRow>
+    rename: (id: string, title: string) => Promise<boolean>
+    remove: (id: string) => Promise<boolean>
+    setPinned: (id: string, pinned: boolean) => Promise<boolean>
+    messages: {
+      list: (conversationId: string) => Promise<MessageRow[]>
+      upsert: (m: {
+        id: string
+        conversationId: string
+        role: string
+        content: string
+        reasoning: string
+        status: string
+        error?: string
+        createdAt: number
+      }) => Promise<boolean>
+    }
+  }
   chat: {
     start: (req: ChatStartRequest) => void
     stop: (requestId: string) => void
@@ -58,6 +98,12 @@ export interface AuroraApi {
   }
   smokeNotifyChatDone: () => void
   smokeNotifyStopVerified: (p: { stoppedEarly: boolean; errored: boolean }) => void
+  smokeNotifyConvVerified: (p: {
+    listCount: number
+    firstTitle: string
+    emptyOk: boolean
+    restoredCount: number
+  }) => void
 }
 
 declare global {

@@ -4,12 +4,19 @@ import * as path from 'path'
 import * as fs from 'fs'
 import {
   closeDb,
+  createConversation,
+  deleteConversation,
   deleteModel,
   getSetting,
   initDb,
+  listConversations,
+  listMessages,
   listModels,
+  renameConversation,
   saveModel,
+  setConversationPinned,
   setSetting,
+  upsertMessage,
 } from './db'
 import { registerChatIpc } from './chat'
 
@@ -134,6 +141,11 @@ const DOM_AUDIT = `
     inspectorW: rect(asides[1])?.w,
     chatW: rect(document.querySelector('main'))?.w,
     messages: document.querySelectorAll('[data-role]').length,
+    msgsDetail: Array.from(document.querySelectorAll('[data-role]')).map((el) =>
+      (el.getAttribute('data-role') + ':' + (el.textContent || '').slice(0, 20)).replace(/\\s+/g, ' ')
+    ),
+    smokeSends: window.__smokeSends || [],
+    smokeMsgOps: (window.__smokeMsgOps || []).slice(-14),
     userMsg: !!document.querySelector('[data-role="user"]'),
     assistantMsg: !!document.querySelector('[data-role="assistant"]'),
     reasoning: !!document.querySelector('[data-reasoning]'),
@@ -144,6 +156,10 @@ const DOM_AUDIT = `
     stopBtn: !!document.querySelector('button[aria-label="停止"]'),
     errorCard: !!document.querySelector('[data-error]'),
     modelPill: (document.querySelector('[data-model-pill]') || {}).textContent || '',
+    sidebarItems: document.querySelectorAll('[data-conv-item]').length,
+    activeConv: (document.querySelector('[data-conv-item][data-active="true"]') || {}).textContent || '',
+    convSearch: !!document.querySelector('[data-conv-search]'),
+    titlebarTitle: (document.querySelector('[data-titlebar-title]') || {}).textContent || '',
     sendBtn: !!document.querySelector('button[aria-label="发送"]'),
     newChatBtn: !!document.querySelector('button[aria-label="新对话"]'),
     suggestionChips: document.querySelectorAll('[data-suggestion]').length,
@@ -157,21 +173,31 @@ async function runSmoke(w: BrowserWindow, errors: string[]): Promise<void> {
   const failures: string[] = []
   const report: Record<string, unknown> = {}
 
-  // 等待渲染层完成两阶段验证：① Mock 对话完整流式 ② 中途停止截断
+  // 等待渲染层完成三阶段验证：① Mock 完整流式 ② 中途停止截断 ③ 会话切换/持久化
   let stopVerified: { stoppedEarly: boolean; errored: boolean } | null = null
-  let stopResolve: (() => void) | null = null
-  const stopDone = new Promise<void>((resolve) => {
-    stopResolve = resolve
-  })
   ipcMain.on('smoke:stop-verified', (_e, p) => {
     stopVerified = p
-    if (stopResolve) {
-      stopResolve()
-      stopResolve = null
+  })
+  let convVerified: {
+    listCount: number
+    firstTitle: string
+    emptyOk: boolean
+    restoredCount: number
+  } | null = null
+  let convResolve: (() => void) | null = null
+  const convDone = new Promise<void>((resolve) => {
+    convResolve = resolve
+  })
+  ipcMain.on('smoke:conv-verified', (_e, p) => {
+    convVerified = p
+    if (convResolve) {
+      convResolve()
+      convResolve = null
     }
   })
-  await Promise.race([stopDone, new Promise((r) => setTimeout(r, 35000))])
+  await Promise.race([convDone, new Promise((r) => setTimeout(r, 45000))])
   report.stopVerified = stopVerified
+  report.convVerified = convVerified
 
   // 浅色阶段
   nativeTheme.themeSource = 'light'
@@ -231,6 +257,36 @@ async function runSmoke(w: BrowserWindow, errors: string[]): Promise<void> {
       '中途停止验证失败: ' + (sv ? JSON.stringify(sv) : '未收到结果'),
     )
   if (sv?.errored !== false) failures.push('停止后消息进入了错误状态')
+  // 会话管理断言
+  const cv = convVerified as {
+    listCount: number
+    firstTitle: string
+    emptyOk: boolean
+    restoredCount: number
+  } | null
+  if (!cv) failures.push('会话切换验证未在超时内完成')
+  else {
+    if (cv.listCount !== 2) failures.push(`会话数量错误: ${cv.listCount}`)
+    if (!cv.firstTitle.startsWith('冒烟测试'))
+      failures.push(`自动标题异常: ${cv.firstTitle}`)
+    if (cv.emptyOk !== true) failures.push('切换到新会话后消息未清空')
+    if (cv.restoredCount !== 4)
+      failures.push(`切回后消息恢复数量错误: ${cv.restoredCount}`)
+  }
+  // 数据库落盘断言
+  const convs = listConversations()
+  if (convs.length !== 2) failures.push(`DB 会话数错误: ${convs.length}`)
+  const firstConv = convs.find((c) => c.title.startsWith('冒烟测试'))
+  if (firstConv) {
+    const msgs = listMessages(firstConv.id)
+    if (msgs.length !== 4) failures.push(`DB 消息数错误: ${msgs.length}`)
+    const hasCode = msgs.some((m) => m.content.includes('快速示例'))
+    if (!hasCode) failures.push('DB 中未找到流式内容')
+    const hasReasoning = msgs.some((m) => m.reasoning.length > 10)
+    if (!hasReasoning) failures.push('DB 中思维链内容缺失')
+  } else {
+    failures.push('DB 中未找到冒烟会话')
+  }
   if (dom.reasoning !== true) failures.push('思维链面板缺失')
   if (dom.codeBlock !== true) failures.push('代码块缺失')
   if (dom.hljs !== true) failures.push('语法高亮未应用')
@@ -238,6 +294,12 @@ async function runSmoke(w: BrowserWindow, errors: string[]): Promise<void> {
   if (dom.copyBtn !== true) failures.push('复制按钮缺失')
   if (dom.stopBtn !== false) failures.push('对话结束后停止按钮仍存在')
   if (dom.errorCard !== false) failures.push('出现了错误卡片')
+  if (dom.sidebarItems !== 2) failures.push(`侧边栏会话数错误: ${dom.sidebarItems}`)
+  if (!String(dom.activeConv).includes('冒烟测试'))
+    failures.push(`侧边栏激活项异常: ${dom.activeConv}`)
+  if (dom.convSearch !== true) failures.push('会话搜索框缺失')
+  if (!String(dom.titlebarTitle).startsWith('冒烟测试'))
+    failures.push(`标题栏标题异常: ${dom.titlebarTitle}`)
   if (errors.length > 0) failures.push('控制台错误: ' + errors.join(' | '))
 
   console.log('[SMOKE] report: ' + JSON.stringify(report, null, 2))
@@ -282,6 +344,31 @@ ipcMain.handle('models:delete', (_e, id: string) => {
 ipcMain.handle('settings:get', (_e, key: string) => getSetting(key))
 ipcMain.handle('settings:set', (_e, key: string, value: string) => {
   setSetting(key, value)
+  return true
+})
+
+// ---- 会话与消息 ----
+ipcMain.handle('conversations:list', () => listConversations())
+ipcMain.handle('conversations:create', (_e, title: string) =>
+  createConversation(title),
+)
+ipcMain.handle('conversations:rename', (_e, id: string, title: string) => {
+  renameConversation(id, title)
+  return true
+})
+ipcMain.handle('conversations:delete', (_e, id: string) => {
+  deleteConversation(id)
+  return true
+})
+ipcMain.handle('conversations:setPinned', (_e, id: string, pinned: boolean) => {
+  setConversationPinned(id, pinned)
+  return true
+})
+ipcMain.handle('messages:list', (_e, conversationId: string) =>
+  listMessages(conversationId),
+)
+ipcMain.handle('messages:upsert', (_e, m) => {
+  upsertMessage(m)
   return true
 })
 

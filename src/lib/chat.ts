@@ -22,39 +22,112 @@ export interface ChatController {
   streamingId: string | null
   send: (text: string) => void
   stop: () => void
+  loadConversation: (conversationId: string) => Promise<void>
   clear: () => void
 }
 
-export function useChat(): ChatController {
+export interface UseChatOptions {
+  /** 当前会话 id；为空表示"新对话"（首条消息时创建） */
+  conversationId: string | null
+  /** 首条消息前确保会话存在，返回会话 id */
+  onEnsureConversation: (title: string) => Promise<string>
+  /** 会话活动（发送/完成）时通知上层刷新列表 */
+  onActivity: () => void
+}
+
+export function truncateTitle(text: string, max = 24): string {
+  const t = text.replace(/\s+/g, ' ').trim()
+  return t.length > max ? t.slice(0, max) : t
+}
+
+function smokeLog(op: string, extra?: unknown): void {
+  if (!window.aurora.smoke) return
+  const w = window as unknown as { __smokeMsgOps?: unknown[] }
+  w.__smokeMsgOps = [...(w.__smokeMsgOps ?? []), { t: Date.now(), op, ...(extra as object) }]
+}
+
+export function useChat(opts: UseChatOptions): ChatController {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [models, setModels] = useState<ModelConfig[]>([])
   const [modelId, setModelIdState] = useState('')
   const [streamingId, setStreamingId] = useState<string | null>(null)
   const streamingRef = useRef<string | null>(null)
+  const convIdRef = useRef<string | null>(opts.conversationId)
+  convIdRef.current = opts.conversationId
+  const flushTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>())
+  const optsRef = useRef(opts)
+  optsRef.current = opts
+  /** 加载代际：并发/过期 load 结果直接丢弃，避免覆盖 send 刚追加的消息 */
+  const loadGenRef = useRef(0)
 
-  // 订阅聊天事件
+  const flushMessage = useCallback((m: ChatMessage) => {
+    const t = flushTimers.current.get(m.id)
+    if (t) clearTimeout(t)
+    flushTimers.current.delete(m.id)
+    const convId = convIdRef.current
+    if (!convId) return
+    void window.aurora.conversations.messages.upsert({
+      id: m.id,
+      conversationId: convId,
+      role: m.role,
+      content: m.content,
+      reasoning: m.reasoning,
+      status: m.status,
+      error: m.error,
+      createdAt: Date.now(),
+    })
+  }, [])
+
+  const scheduleFlush = useCallback(
+    (m: ChatMessage) => {
+      const t = flushTimers.current.get(m.id)
+      if (t) clearTimeout(t)
+      flushTimers.current.set(
+        m.id,
+        setTimeout(() => {
+          flushTimers.current.delete(m.id)
+          // 取最新状态再落库
+          setMessages((prev) => {
+            const cur = prev.find((x) => x.id === m.id)
+            if (cur) flushMessage(cur)
+            return prev
+          })
+        }, 300),
+      )
+    },
+    [flushMessage],
+  )
+
+  // 订阅聊天事件（全局，不随会话切换卸载）
   useEffect(() => {
     const offs = [
       window.aurora.chat.onDelta(({ requestId, content, reasoning }) => {
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.id === requestId
-              ? {
-                  ...m,
-                  content: m.content + (content ?? ''),
-                  reasoning: m.reasoning + (reasoning ?? ''),
-                }
-              : m,
-          ),
-        )
+        setMessages((prev) => {
+          const idx = prev.findIndex((m) => m.id === requestId)
+          if (idx < 0) return prev
+          const next = [...prev]
+          next[idx] = {
+            ...next[idx],
+            content: next[idx].content + (content ?? ''),
+            reasoning: next[idx].reasoning + (reasoning ?? ''),
+          }
+          scheduleFlush(next[idx])
+          return next
+        })
       }),
       window.aurora.chat.onDone(({ requestId }) => {
-        setMessages((prev) =>
-          prev.map((m) => (m.id === requestId ? { ...m, status: 'done' } : m)),
-        )
+        setMessages((prev) => {
+          const idx = prev.findIndex((m) => m.id === requestId)
+          if (idx < 0) return prev
+          const next = [...prev]
+          next[idx] = { ...next[idx], status: 'done' }
+          flushMessage(next[idx])
+          return next
+        })
         if (streamingRef.current === requestId) {
           streamingRef.current = null
           setStreamingId(null)
+          optsRef.current.onActivity()
           if (window.aurora.smoke && !smokeNotified) {
             smokeNotified = true
             window.aurora.smokeNotifyChatDone()
@@ -62,20 +135,22 @@ export function useChat(): ChatController {
         }
       }),
       window.aurora.chat.onError(({ requestId, message, aborted }) => {
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.id === requestId
-              ? {
-                  ...m,
-                  status: aborted ? 'done' : 'error',
-                  error: aborted ? undefined : message,
-                }
-              : m,
-          ),
-        )
+        setMessages((prev) => {
+          const idx = prev.findIndex((m) => m.id === requestId)
+          if (idx < 0) return prev
+          const next = [...prev]
+          next[idx] = {
+            ...next[idx],
+            status: aborted ? 'done' : 'error',
+            error: aborted ? undefined : message,
+          }
+          flushMessage(next[idx])
+          return next
+        })
         if (streamingRef.current === requestId) {
           streamingRef.current = null
           setStreamingId(null)
+          optsRef.current.onActivity()
         }
       }),
       window.aurora.chat.onUsage(({ requestId, usage }) => {
@@ -85,7 +160,7 @@ export function useChat(): ChatController {
       }),
     ]
     return () => offs.forEach((off) => off())
-  }, [])
+  }, [scheduleFlush, flushMessage])
 
   // 加载模型列表
   useEffect(() => {
@@ -95,40 +170,102 @@ export function useChat(): ChatController {
     })
   }, [])
 
+  const loadConversation = useCallback(
+    async (conversationId: string) => {
+      const gen = ++loadGenRef.current
+      const rows = await window.aurora.conversations.messages.list(conversationId)
+      if (gen !== loadGenRef.current) {
+        smokeLog('load-discard', { n: rows.length })
+        return
+      }
+      const msgs: ChatMessage[] = rows.map((r) => ({
+        id: r.id,
+        role: r.role === 'user' ? 'user' : 'assistant',
+        content: r.content,
+        reasoning: r.reasoning,
+        // 重启后残留的 streaming 记录视为 done（无法续流）
+        status: (r.status === 'error' ? 'error' : 'done') as ChatMessage['status'],
+        error: r.error || undefined,
+      }))
+      smokeLog('load', { n: msgs.length, ids: msgs.map((m) => m.id.slice(0, 6)) })
+      setMessages(msgs)
+    },
+    [],
+  )
+
   const send = useCallback(
     (text: string, forceModelId?: string) => {
       if (streamingRef.current) return
       const mid = forceModelId ?? modelId
       const trimmed = text.trim()
       if (!trimmed || !mid) return
-      const requestId = crypto.randomUUID()
-      const apiMessages = messages
-        .filter((m) => m.status !== 'error' && m.content !== '')
-        .map((m) => ({ role: m.role, content: m.content }))
-      apiMessages.push({ role: 'user', content: trimmed })
+      if (window.aurora.smoke) {
+        const w = window as unknown as { __smokeSends?: string[] }
+        w.__smokeSends = [...(w.__smokeSends ?? []), trimmed]
+      }
+      void (async () => {
+        let convId = convIdRef.current
+        if (!convId) {
+          convId = await optsRef.current.onEnsureConversation(
+            truncateTitle(trimmed),
+          )
+          convIdRef.current = convId
+        }
+        const requestId = crypto.randomUUID()
+        const apiMessages = messages
+          .filter((m) => m.status !== 'error' && m.content !== '')
+          .map((m) => ({ role: m.role, content: m.content }))
+        apiMessages.push({ role: 'user', content: trimmed })
 
-      const userMsg: ChatMessage = {
-        id: crypto.randomUUID(),
-        role: 'user',
-        content: trimmed,
-        reasoning: '',
-        status: 'done',
-      }
-      const asstMsg: ChatMessage = {
-        id: requestId,
-        role: 'assistant',
-        content: '',
-        reasoning: '',
-        status: 'streaming',
-      }
-      setMessages((prev) => [...prev, userMsg, asstMsg])
-      streamingRef.current = requestId
-      setStreamingId(requestId)
-      window.aurora.chat.start({
-        requestId,
-        modelId: mid,
-        messages: apiMessages,
-      })
+        const userMsg: ChatMessage = {
+          id: crypto.randomUUID(),
+          role: 'user',
+          content: trimmed,
+          reasoning: '',
+          status: 'done',
+        }
+        const asstMsg: ChatMessage = {
+          id: requestId,
+          role: 'assistant',
+          content: '',
+          reasoning: '',
+          status: 'streaming',
+        }
+        // 先落库再启动流，切换会话也能恢复
+        await window.aurora.conversations.messages.upsert({
+          id: userMsg.id,
+          conversationId: convId,
+          role: 'user',
+          content: userMsg.content,
+          reasoning: '',
+          status: 'done',
+          createdAt: Date.now(),
+        })
+        await window.aurora.conversations.messages.upsert({
+          id: asstMsg.id,
+          conversationId: convId,
+          role: 'assistant',
+          content: '',
+          reasoning: '',
+          status: 'streaming',
+          createdAt: Date.now() + 1,
+        })
+        smokeLog('append', {
+          ids: [userMsg.id.slice(0, 6), asstMsg.id.slice(0, 6)],
+          convId,
+        })
+        // 使在途的 load 失效（它们可能读到了不完整的落库状态）
+        loadGenRef.current++
+        setMessages((prev) => [...prev, userMsg, asstMsg])
+        streamingRef.current = requestId
+        setStreamingId(requestId)
+        optsRef.current.onActivity()
+        window.aurora.chat.start({
+          requestId,
+          modelId: mid,
+          messages: apiMessages,
+        })
+      })()
     },
     [messages, modelId],
   )
@@ -157,5 +294,15 @@ export function useChat(): ChatController {
 
   const setModelId = useCallback((id: string) => setModelIdState(id), [])
 
-  return { messages, models, modelId, setModelId, streamingId, send, stop, clear }
+  return {
+    messages,
+    models,
+    modelId,
+    setModelId,
+    streamingId,
+    send,
+    stop,
+    loadConversation,
+    clear,
+  }
 }

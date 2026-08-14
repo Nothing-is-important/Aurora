@@ -106,9 +106,16 @@ function migrate(): void {
       content TEXT NOT NULL DEFAULT '',
       reasoning TEXT NOT NULL DEFAULT '',
       status TEXT NOT NULL DEFAULT 'done',
+      error TEXT NOT NULL DEFAULT '',
       created_at INTEGER NOT NULL
     );
   `)
+  // 旧库补 error 列
+  try {
+    db.run(`ALTER TABLE messages ADD COLUMN error TEXT NOT NULL DEFAULT ''`)
+  } catch {
+    /* 已存在则忽略 */
+  }
 }
 
 function seed(): void {
@@ -214,6 +221,152 @@ export function setSetting(key: string, value: string): void {
 export function persist(): void {
   if (saveTimer) clearTimeout(saveTimer)
   saveTimer = setTimeout(persistNow, 400)
+}
+
+// ---- 会话 ----
+export interface ConversationRow {
+  id: string
+  title: string
+  modelId: string
+  pinned: boolean
+  createdAt: number
+  updatedAt: number
+}
+
+type ConvRow = (string | number | Uint8Array | null)[]
+
+function rowToConv(row: ConvRow): ConversationRow {
+  return {
+    id: String(row[0]),
+    title: String(row[1]),
+    modelId: String(row[2]),
+    pinned: !!row[3],
+    createdAt: Number(row[4]),
+    updatedAt: Number(row[5]),
+  }
+}
+
+export function listConversations(): ConversationRow[] {
+  if (!db) return []
+  const res = db.exec(
+    `SELECT id,title,model_id,pinned,created_at,updated_at
+     FROM conversations ORDER BY pinned DESC, updated_at DESC`,
+  )
+  if (!res.length) return []
+  return res[0].values.map(rowToConv)
+}
+
+export function createConversation(title: string): ConversationRow {
+  const now = Date.now()
+  const id = randomId()
+  db?.run(
+    `INSERT INTO conversations (id,title,model_id,pinned,created_at,updated_at)
+     VALUES (?,?,?,0,?,?)`,
+    [id, title, '', now, now],
+  )
+  persist()
+  return { id, title, modelId: '', pinned: false, createdAt: now, updatedAt: now }
+}
+
+export function renameConversation(id: string, title: string): void {
+  db?.run('UPDATE conversations SET title = ?, updated_at = ? WHERE id = ?', [
+    title,
+    Date.now(),
+    id,
+  ])
+  persist()
+}
+
+export function deleteConversation(id: string): void {
+  db?.run('DELETE FROM messages WHERE conversation_id = ?', [id])
+  db?.run('DELETE FROM conversations WHERE id = ?', [id])
+  persist()
+}
+
+export function setConversationPinned(id: string, pinned: boolean): void {
+  db?.run('UPDATE conversations SET pinned = ? WHERE id = ?', [pinned ? 1 : 0, id])
+  persist()
+}
+
+export function touchConversation(id: string): void {
+  db?.run('UPDATE conversations SET updated_at = ? WHERE id = ?', [Date.now(), id])
+  persist()
+}
+
+// ---- 消息 ----
+export interface MessageRow {
+  id: string
+  conversationId: string
+  role: string
+  content: string
+  reasoning: string
+  status: string
+  error: string
+  createdAt: number
+}
+
+type MsgRow = (string | number | Uint8Array | null)[]
+
+function rowToMsg(row: MsgRow): MessageRow {
+  return {
+    id: String(row[0]),
+    conversationId: String(row[1]),
+    role: String(row[2]),
+    content: String(row[3]),
+    reasoning: String(row[4]),
+    status: String(row[5]),
+    error: String(row[6]),
+    createdAt: Number(row[7]),
+  }
+}
+
+export function listMessages(conversationId: string): MessageRow[] {
+  if (!db) return []
+  const res = db.exec(
+    `SELECT id,conversation_id,role,content,reasoning,status,error,created_at
+     FROM messages WHERE conversation_id = ? ORDER BY created_at, rowid`,
+    [conversationId],
+  )
+  if (!res.length) return []
+  return res[0].values.map(rowToMsg)
+}
+
+export function upsertMessage(m: {
+  id: string
+  conversationId: string
+  role: string
+  content: string
+  reasoning: string
+  status: string
+  error?: string
+  createdAt: number
+}): void {
+  if (!db) return
+  db.run(
+    `INSERT INTO messages (id,conversation_id,role,content,reasoning,status,error,created_at)
+     VALUES (?,?,?,?,?,?,?,?)
+     ON CONFLICT(id) DO UPDATE SET
+       content=excluded.content, reasoning=excluded.reasoning,
+       status=excluded.status, error=excluded.error`,
+    [
+      m.id, m.conversationId, m.role, m.content, m.reasoning, m.status,
+      m.error ?? '', m.createdAt,
+    ],
+  )
+  db.run('UPDATE conversations SET updated_at = ? WHERE id = ?', [
+    Date.now(),
+    m.conversationId,
+  ])
+  persist()
+}
+
+function randomId(): string {
+  const c = 'abcdefghijklmnopqrstuvwxyz0123456789'
+  let s = ''
+  for (let i = 0; i < 16; i++) {
+    s += c[Math.floor(Math.random() * c.length)]
+  }
+  return s + Date.now().toString(36)
 }
 
 function persistNow(): void {

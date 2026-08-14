@@ -11,8 +11,7 @@ import {
   Sparkles,
   Square,
 } from 'lucide-react'
-import { useChat } from '../lib/chat'
-import type { ChatMessage } from '../lib/chat'
+import type { ChatController, ChatMessage } from '../lib/chat'
 import { Markdown } from './Markdown'
 
 const SUGGESTIONS = [
@@ -79,9 +78,22 @@ function AssistantBubble({ m }: { m: ChatMessage }) {
   )
 }
 
-export default function ChatArea({ smoke }: { smoke: boolean }) {
-  const { messages, models, modelId, setModelId, streamingId, send, stop } =
-    useChat()
+interface ChatAreaProps {
+  chat: ChatController
+  settingsOpen: boolean
+  onSmokePhase2Done: () => void
+}
+
+export default function ChatArea({ chat, settingsOpen, onSmokePhase2Done }: ChatAreaProps) {
+  const {
+    messages,
+    models,
+    modelId,
+    setModelId,
+    streamingId,
+    send,
+    stop,
+  } = chat
   const [input, setInput] = useState('')
   const [menuOpen, setMenuOpen] = useState(false)
   const taRef = useRef<HTMLTextAreaElement>(null)
@@ -95,6 +107,17 @@ export default function ChatArea({ smoke }: { smoke: boolean }) {
     const sc = scrollRef.current
     if (sc) sc.scrollTo({ top: sc.scrollHeight, behavior: 'smooth' })
   }, [messages])
+
+  useEffect(() => {
+    if (!menuOpen) return
+    const onDown = (e: MouseEvent): void => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
+  }, [menuOpen])
 
   // ---- 冒烟第二阶段：中途停止验证 ----
   const phase2 = useRef(false)
@@ -115,23 +138,12 @@ export default function ChatArea({ smoke }: { smoke: boolean }) {
   useEffect(() => {
     if (!window.aurora.smoke || !phase2.current || !phase2StopClicked.current) return
     if (streamingId !== null) return
-    // 第二次对话已结束（因停止）——验证内容被截断且无错误
     const lastAsst = [...messages].reverse().find((m) => m.role === 'assistant')
     const stoppedEarly = !!lastAsst && lastAsst.content.length < 400
     const errored = lastAsst?.status === 'error'
     window.aurora.smokeNotifyStopVerified({ stoppedEarly, errored })
-  }, [streamingId, messages])
-
-  useEffect(() => {
-    if (!menuOpen) return
-    const onDown = (e: MouseEvent): void => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        setMenuOpen(false)
-      }
-    }
-    document.addEventListener('mousedown', onDown)
-    return () => document.removeEventListener('mousedown', onDown)
-  }, [menuOpen])
+    onSmokePhase2Done()
+  }, [streamingId, messages, onSmokePhase2Done])
 
   const autoGrow = (): void => {
     const ta = taRef.current
@@ -160,8 +172,7 @@ export default function ChatArea({ smoke }: { smoke: boolean }) {
         >
           <span
             className={`h-1.5 w-1.5 rounded-full ${
-              activeModel &&
-              (activeModel.provider === 'mock' || activeModel.apiKey)
+              activeModel && (activeModel.provider === 'mock' || activeModel.apiKey)
                 ? 'bg-apple-green'
                 : 'bg-black/25 dark:bg-white/30'
             }`}
