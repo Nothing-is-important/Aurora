@@ -123,6 +123,10 @@ const api = {
       ipcRenderer.invoke('conversations:delete', id),
     setPinned: (id: string, pinned: boolean): Promise<boolean> =>
       ipcRenderer.invoke('conversations:setPinned', id, pinned),
+    getSystemPrompt: (id: string): Promise<string> =>
+      ipcRenderer.invoke('conversations:getSystemPrompt', id),
+    setSystemPrompt: (id: string, text: string): Promise<boolean> =>
+      ipcRenderer.invoke('conversations:setSystemPrompt', id, text),
     messages: {
       list: (conversationId: string): Promise<MessageRow[]> =>
         ipcRenderer.invoke('messages:list', conversationId),
@@ -183,6 +187,8 @@ const api = {
     jsonOk: boolean
     pathOk: boolean
   }): void => ipcRenderer.send('smoke:export-verified', p),
+  smokeNotifyPromptVerified: (p: { sent: boolean; sysOk: boolean }): void =>
+    ipcRenderer.send('smoke:prompt-verified', p),
 }
 
 contextBridge.exposeInMainWorld('aurora', api)

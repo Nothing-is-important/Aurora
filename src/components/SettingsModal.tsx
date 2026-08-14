@@ -55,6 +55,23 @@ export default function SettingsModal({
     models?: number | null
   } | null>(null)
   const [saving, setSaving] = useState(false)
+  const [sysPrompt, setSysPrompt] = useState('')
+  const [sysSaved, setSysSaved] = useState(false)
+
+  useEffect(() => {
+    if (open) {
+      void window.aurora.settings.get('systemPrompt').then((v) => {
+        setSysPrompt(v ?? '')
+        setSysSaved(false)
+      })
+    }
+  }, [open])
+
+  const saveSysPrompt = async (): Promise<void> => {
+    await window.aurora.settings.set('systemPrompt', sysPrompt)
+    setSysSaved(true)
+    setTimeout(() => setSysSaved(false), 2000)
+  }
 
   useEffect(() => {
     if (open && models.length > 0 && !models.find((m) => m.id === selectedId)) {
@@ -208,6 +225,34 @@ export default function SettingsModal({
           {/* 编辑表单 */}
           <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
             <div className="space-y-3.5">
+              <div>
+                <label className={label}>
+                  系统提示词（全局默认，会话级覆盖优先）
+                </label>
+                <textarea
+                  data-sysprompt-input
+                  rows={3}
+                  value={sysPrompt}
+                  onChange={(e) => setSysPrompt(e.target.value)}
+                  placeholder="为空则不注入系统提示词；可从输入区模板菜单快速套用"
+                  className={`${field} resize-y font-mono text-[12px] leading-relaxed`}
+                />
+                <div className="mt-1.5 flex items-center gap-2">
+                  <button
+                    data-sysprompt-save
+                    onClick={() => void saveSysPrompt()}
+                    className="h-7 rounded-lg bg-apple-blue px-3.5 text-[12px] font-medium text-white transition-all duration-200 ease-spring hover:brightness-110 active:scale-[0.96]"
+                  >
+                    保存
+                  </button>
+                  {sysSaved && (
+                    <span className="flex items-center gap-1 text-[11.5px] text-apple-green">
+                      <Check size={12} strokeWidth={2.6} /> 已保存
+                    </span>
+                  )}
+                </div>
+              </div>
+
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className={label}>显示名称</label>

@@ -95,6 +95,7 @@ function migrate(): void {
       id TEXT PRIMARY KEY,
       title TEXT NOT NULL,
       model_id TEXT NOT NULL DEFAULT '',
+      system_prompt TEXT NOT NULL DEFAULT '',
       pinned INTEGER NOT NULL DEFAULT 0,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
@@ -125,6 +126,7 @@ function migrate(): void {
   alt(`ALTER TABLE messages ADD COLUMN usage_json TEXT NOT NULL DEFAULT ''`)
   alt(`ALTER TABLE messages ADD COLUMN duration_ms INTEGER NOT NULL DEFAULT 0`)
   alt(`ALTER TABLE messages ADD COLUMN first_token_ms INTEGER NOT NULL DEFAULT 0`)
+  alt(`ALTER TABLE conversations ADD COLUMN system_prompt TEXT NOT NULL DEFAULT ''`)
 }
 
 function seed(): void {
@@ -299,6 +301,21 @@ export function setConversationPinned(id: string, pinned: boolean): void {
 
 export function touchConversation(id: string): void {
   db?.run('UPDATE conversations SET updated_at = ? WHERE id = ?', [Date.now(), id])
+  persist()
+}
+
+export function getConversationSystemPrompt(id: string): string {
+  if (!db) return ''
+  const res = db.exec(
+    'SELECT system_prompt FROM conversations WHERE id = ?',
+    [id],
+  )
+  if (!res.length || !res[0].values.length) return ''
+  return String(res[0].values[0][0] ?? '')
+}
+
+export function setConversationSystemPrompt(id: string, text: string): void {
+  db?.run('UPDATE conversations SET system_prompt = ? WHERE id = ?', [text, id])
   persist()
 }
 

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   Check,
   FileJson,
@@ -57,6 +57,23 @@ export default function InspectorPanel({
   const [tab, setTab] = useState<Tab>('tools')
   const [open, setOpen] = useState(true)
   const [exported, setExported] = useState<string | null>(null)
+  const [convSys, setConvSys] = useState('')
+  const [convSysSaved, setConvSysSaved] = useState(false)
+
+  useEffect(() => {
+    if (!conversation) return
+    setConvSysSaved(false)
+    void window.aurora.conversations
+      .getSystemPrompt(conversation.id)
+      .then((v) => setConvSys(v ?? ''))
+  }, [conversation?.id])
+
+  const saveConvSys = async (): Promise<void> => {
+    if (!conversation) return
+    await window.aurora.conversations.setSystemPrompt(conversation.id, convSys)
+    setConvSysSaved(true)
+    setTimeout(() => setConvSysSaved(false), 2000)
+  }
 
   if (!open) {
     return (
@@ -178,6 +195,34 @@ export default function InspectorPanel({
                 <span className="text-black/70 dark:text-white/75">{v}</span>
               </div>
             ))}
+          </div>
+
+          <div>
+            <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-black/35 dark:text-white/30">
+              会话级系统提示词（覆盖全局）
+            </p>
+            <textarea
+              data-conv-sysprompt
+              rows={3}
+              value={convSys}
+              onChange={(e) => setConvSys(e.target.value)}
+              placeholder="留空则使用全局提示词"
+              className="w-full resize-y rounded-lg bg-black/[0.045] px-3 py-2 font-mono text-[11.5px] leading-relaxed outline-none ring-1 ring-transparent transition-shadow focus:ring-apple-blue/50 dark:bg-white/[0.07]"
+            />
+            <div className="mt-1.5 flex items-center gap-2">
+              <button
+                data-conv-sysprompt-save
+                onClick={() => void saveConvSys()}
+                className="h-7 rounded-lg bg-apple-blue px-3.5 text-[12px] font-medium text-white transition-all duration-200 ease-spring hover:brightness-110 active:scale-[0.96]"
+              >
+                保存
+              </button>
+              {convSysSaved && (
+                <span className="flex items-center gap-1 text-[11.5px] text-apple-green">
+                  <Check size={12} strokeWidth={2.6} /> 已保存
+                </span>
+              )}
+            </div>
           </div>
           <div>
             <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-black/35 dark:text-white/30">

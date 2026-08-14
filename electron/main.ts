@@ -16,6 +16,7 @@ import {
   deleteConversation,
   deleteMessagesFrom,
   deleteModel,
+  getConversationSystemPrompt,
   getSetting,
   initDb,
   listConversations,
@@ -24,10 +25,11 @@ import {
   renameConversation,
   saveModel,
   setConversationPinned,
+  setConversationSystemPrompt,
   setSetting,
   upsertMessage,
 } from './db'
-import { registerChatIpc } from './chat'
+import { registerChatIpc, getSmokeChatRequests } from './chat'
 
 const SMOKE = process.env.SMOKE === '1'
 const DEV_URL = process.env.VITE_DEV_SERVER_URL
@@ -245,6 +247,22 @@ const DOM_AUDIT = `
   out.usageMeta = (document.querySelector('[data-usage]') || {}).textContent || ''
   out.usageSummary = (document.querySelector('[data-usage-summary]') || {}).textContent || ''
 
+  // 模板菜单
+  const promptBtn = document.querySelector('[data-prompt-btn]')
+  if (promptBtn) promptBtn.click()
+  await sleep(300)
+  out.promptMenuOpen = !!document.querySelector('[data-prompt-menu]')
+  out.templateItems = document.querySelectorAll('[data-template-item]').length
+  const chatTpl = Array.from(document.querySelectorAll('[data-template-item]')).find(
+    (b) => (b.textContent || '').includes('翻译助手')
+  )
+  if (chatTpl) chatTpl.click()
+  await sleep(300)
+  out.promptMenuClosed = !document.querySelector('[data-prompt-menu]')
+  out.inputHasTemplate = (
+    (document.querySelector('textarea[placeholder="给 Aurora 发送消息…"]') || {}).value || ''
+  ).includes('翻译成中文')
+
   // 复制消息（主进程稍后验证剪贴板）
   const copyBtn = document.querySelector('button[aria-label="复制消息"]')
   if (copyBtn) copyBtn.click()
@@ -347,6 +365,22 @@ async function runSmoke(w: BrowserWindow, errors: string[]): Promise<void> {
   await Promise.race([exportDone, new Promise((r) => setTimeout(r, 40000))])
   report.exportVerified = exportVerified
 
+  // 等待系统提示词注入验证
+  let promptVerified: { sent: boolean; sysOk: boolean } | null = null
+  let promptResolve: (() => void) | null = null
+  const promptDone = new Promise<void>((resolve) => {
+    promptResolve = resolve
+  })
+  ipcMain.on('smoke:prompt-verified', (_e, p) => {
+    promptVerified = p
+    if (promptResolve) {
+      promptResolve()
+      promptResolve = null
+    }
+  })
+  await Promise.race([promptDone, new Promise((r) => setTimeout(r, 40000))])
+  report.promptVerified = promptVerified
+
   // 浅色阶段
   nativeTheme.themeSource = 'light'
   await new Promise((r) => setTimeout(r, 1200))
@@ -396,7 +430,7 @@ async function runSmoke(w: BrowserWindow, errors: string[]): Promise<void> {
     failures.push(`检查器宽度异常: ${dom.inspectorW}`)
   if (dom.chatW < 600) failures.push(`对话区宽度异常: ${dom.chatW}`)
   if (dom.overflowX === true) failures.push('存在水平溢出')
-  if (dom.messages !== 4) failures.push(`冒烟消息数量错误: ${dom.messages}`)
+  if (dom.messages !== 6) failures.push(`冒烟消息数量错误: ${dom.messages}`)
   // 气泡宽度固定：应铺满消息容器（不随内容长度变化）
   if (dom.assistantBubbleW < 600)
     failures.push(`助手气泡未固定全宽: ${dom.assistantBubbleW}`)
@@ -516,8 +550,25 @@ async function runSmoke(w: BrowserWindow, errors: string[]): Promise<void> {
   const usageMeta = String(dom.usageMeta)
   if (!usageMeta.includes('tokens') || !usageMeta.includes('耗时') || !usageMeta.includes('≈¥'))
     failures.push(`消息用量 meta 缺失: ${usageMeta}`)
-  if (!String(dom.usageSummary).includes('242'))
+  if (!String(dom.usageSummary).includes('484'))
     failures.push(`用量总览缺失: ${String(dom.usageSummary).slice(0, 60)}`)
+  // 提示词系统断言
+  const pv = promptVerified as { sent: boolean; sysOk: boolean } | null
+  if (!pv || pv.sent !== true || pv.sysOk !== true)
+    failures.push('系统提示词注入验证失败: ' + JSON.stringify(pv))
+  const lastReq = getSmokeChatRequests().slice(-1)[0]
+  if (
+    !lastReq ||
+    lastReq.messages[0]?.role !== 'system' ||
+    lastReq.messages[0]?.content !== '会话级冒烟覆盖提示词'
+  )
+    failures.push(
+      '请求未包含会话级系统提示词: ' + JSON.stringify(lastReq?.messages?.[0]),
+    )
+  if (dom.promptMenuOpen !== true) failures.push('模板菜单未打开')
+  if (dom.templateItems < 6) failures.push(`模板条目过少: ${dom.templateItems}`)
+  if (dom.promptMenuClosed !== true) failures.push('模板菜单未关闭')
+  if (dom.inputHasTemplate !== true) failures.push('模板未填入输入框')
   if (dom.editStarted !== true || dom.editFlowDone !== true)
     failures.push('编辑重发流程未完成')
   if (dom.editMsgs !== 2) failures.push(`编辑后消息数错误: ${dom.editMsgs}`)
@@ -590,6 +641,13 @@ ipcMain.handle('conversations:delete', (_e, id: string) => {
 })
 ipcMain.handle('conversations:setPinned', (_e, id: string, pinned: boolean) => {
   setConversationPinned(id, pinned)
+  return true
+})
+ipcMain.handle('conversations:getSystemPrompt', (_e, id: string) =>
+  getConversationSystemPrompt(id),
+)
+ipcMain.handle('conversations:setSystemPrompt', (_e, id: string, text: string) => {
+  setConversationSystemPrompt(id, text)
   return true
 })
 ipcMain.handle('messages:list', (_e, conversationId: string) =>

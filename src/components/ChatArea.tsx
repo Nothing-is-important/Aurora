@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import {
   AlertCircle,
   ArrowUp,
+  BookMarked,
   Brain,
   Check,
   ChevronDown,
@@ -20,6 +21,8 @@ import type { ChatController, ChatMessage } from '../lib/chat'
 import type { PickedFile } from '../lib/ipc'
 import { estimateCost, formatCost, pricingFor } from '../lib/pricing'
 import type { ModelPricing } from '../lib/pricing'
+import { BUILTIN_TEMPLATES, loadCustomTemplates } from '../lib/templates'
+import type { PromptTemplate } from '../lib/templates'
 import { Markdown } from './Markdown'
 
 const SUGGESTIONS = [
@@ -170,6 +173,10 @@ export default function ChatArea({ chat, settingsOpen, onSmokePhase2Done }: Chat
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editDraft, setEditDraft] = useState('')
   const [copiedId, setCopiedId] = useState<string | null>(null)
+  const [promptMenuOpen, setPromptMenuOpen] = useState(false)
+  const [customTemplates, setCustomTemplates] = useState<PromptTemplate[]>([])
+  const [promptToast, setPromptToast] = useState<string | null>(null)
+  const promptMenuRef = useRef<HTMLDivElement>(null)
   const taRef = useRef<HTMLTextAreaElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
@@ -193,6 +200,37 @@ export default function ChatArea({ chat, settingsOpen, onSmokePhase2Done }: Chat
     document.addEventListener('mousedown', onDown)
     return () => document.removeEventListener('mousedown', onDown)
   }, [menuOpen])
+
+  useEffect(() => {
+    void loadCustomTemplates().then(setCustomTemplates)
+  }, [])
+
+  useEffect(() => {
+    if (!promptMenuOpen) return
+    const onDown = (e: MouseEvent): void => {
+      if (
+        promptMenuRef.current &&
+        !promptMenuRef.current.contains(e.target as Node)
+      ) {
+        setPromptMenuOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
+  }, [promptMenuOpen])
+
+  const applyTemplate = (t: PromptTemplate): void => {
+    setPromptMenuOpen(false)
+    if (t.kind === 'chat') {
+      setInput((prev) => (prev.trim() ? prev + '\n\n' : '') + t.prompt)
+      taRef.current?.focus()
+    } else {
+      void window.aurora.settings.set('systemPrompt', t.prompt).then(() => {
+        setPromptToast(`已设为系统提示词：${t.name}`)
+        setTimeout(() => setPromptToast(null), 2500)
+      })
+    }
+  }
 
   // ---- 冒烟第二阶段：中途停止验证 ----
   const phase2 = useRef(false)
@@ -486,7 +524,52 @@ export default function ChatArea({ chat, settingsOpen, onSmokePhase2Done }: Chat
 
       {/* 输入区 */}
       <div className="px-4 pb-4">
-        <div className="mx-auto w-full max-w-[780px]">
+        <div className="relative mx-auto w-full max-w-[780px]">
+          {promptToast && (
+            <div
+              data-prompt-toast
+              className="animate-slideUp absolute -top-10 left-1/2 z-30 flex -translate-x-1/2 items-center gap-1.5 whitespace-nowrap rounded-full bg-black/75 px-3.5 py-1.5 text-[12px] text-white shadow-glass backdrop-blur dark:bg-white/20"
+            >
+              <Check size={12} strokeWidth={2.6} className="text-apple-green" />
+              {promptToast}
+            </div>
+          )}
+
+          {/* 模板菜单 */}
+          {promptMenuOpen && (
+            <div
+              ref={promptMenuRef}
+              data-prompt-menu
+              className="glass-strong animate-scaleIn absolute bottom-[calc(100%+10px)] left-0 z-30 max-h-[320px] w-[340px] origin-bottom overflow-y-auto rounded-2xl p-1.5 shadow-glass"
+            >
+              <p className="px-3 pb-1 pt-1.5 text-[10.5px] font-semibold uppercase tracking-wider text-black/35 dark:text-white/30">
+                提示词模板
+              </p>
+              {[...BUILTIN_TEMPLATES, ...customTemplates].map((t) => (
+                <button
+                  key={t.id}
+                  data-template-item
+                  onClick={() => applyTemplate(t)}
+                  className="flex w-full items-start gap-2.5 rounded-xl px-3 py-2 text-left transition-colors hover:bg-black/[0.04] dark:hover:bg-white/[0.06]"
+                >
+                  <span
+                    className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${
+                      t.kind === 'system' ? 'bg-apple-purple' : 'bg-apple-blue'
+                    }`}
+                  />
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-[12.5px] font-medium text-black/80 dark:text-white/85">
+                      {t.name}
+                    </span>
+                    <span className="block truncate text-[11px] text-black/40 dark:text-white/40">
+                      {t.desc} · {t.kind === 'system' ? '设为系统提示词' : '填入输入框'}
+                    </span>
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+
           <div className="glass-strong rounded-[26px] p-2 shadow-glass transition-shadow focus-within:ring-1 focus-within:ring-apple-blue/40">
             {attachments.length > 0 && (
               <div className="flex flex-wrap gap-2 px-1.5 pb-2 pt-1">
@@ -528,6 +611,14 @@ export default function ChatArea({ chat, settingsOpen, onSmokePhase2Done }: Chat
               </div>
             )}
             <div className="flex items-end gap-1">
+              <button
+                data-prompt-btn
+                onClick={() => setPromptMenuOpen((v) => !v)}
+                title="提示词模板"
+                className="mb-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-black/40 transition-colors hover:bg-black/[0.05] hover:text-black/70 dark:text-white/40 dark:hover:bg-white/[0.08] dark:hover:text-white/75"
+              >
+                <BookMarked size={16} strokeWidth={2} />
+              </button>
               <button
                 data-attach
                 onClick={() => void pickFiles()}

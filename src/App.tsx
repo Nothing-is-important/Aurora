@@ -108,6 +108,7 @@ function AppInner() {
 
   // ---- 冒烟第五阶段：导出验证 ----
   const phase5 = useRef(false)
+  const [exportDone, setExportDone] = useState(false)
   useEffect(() => {
     if (!window.aurora.smoke || !convDone || phase5.current) return
     phase5.current = true
@@ -121,6 +122,7 @@ function AppInner() {
           jsonOk: false,
           pathOk: false,
         })
+        setExportDone(true)
         return
       }
       const md = await window.aurora.conversations.export(conv.id, 'md')
@@ -136,8 +138,40 @@ function AppInner() {
         jsonOk,
         pathOk: !!md.path && !!j.path,
       })
+      setExportDone(true)
     })()
   }, [convDone])
+
+  // ---- 冒烟第六阶段：系统提示词注入 ----
+  const phase6 = useRef(false)
+  const streamingAppRef = useRef(chat.streamingId)
+  streamingAppRef.current = chat.streamingId
+  useEffect(() => {
+    if (!window.aurora.smoke || !exportDone || phase6.current) return
+    phase6.current = true
+    void (async () => {
+      await window.aurora.settings.set('systemPrompt', '你是全局冒烟系统提示词')
+      const conv = (await window.aurora.conversations.list()).find((c) =>
+        c.title.startsWith('冒烟'),
+      )
+      if (!conv) {
+        window.aurora.smokeNotifyPromptVerified({ sent: false, sysOk: false })
+        return
+      }
+      await window.aurora.conversations.setSystemPrompt(
+        conv.id,
+        '会话级冒烟覆盖提示词',
+      )
+      chat.send('冒烟系统提示词注入测试')
+      const ok = await waitFor(
+        () =>
+          streamingAppRef.current === null &&
+          messagesRef.current.length === 6,
+        25000,
+      )
+      window.aurora.smokeNotifyPromptVerified({ sent: ok, sysOk: ok })
+    })()
+  }, [exportDone, chat])
 
   const handleSelect = useCallback((id: string) => {
     setActiveId(id)

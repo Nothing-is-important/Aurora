@@ -21,8 +21,16 @@ export interface ChatUsage {
 
 const active = new Map<string, AbortController>()
 
+/** 冒烟模式记录最近的请求（用于系统提示词注入断言） */
+const smokeRequests: ChatStartRequest[] = []
+
+export function getSmokeChatRequests(): ChatStartRequest[] {
+  return smokeRequests
+}
+
 export function registerChatIpc(getModels: () => ModelConfig[]): void {
   ipcMain.on('chat:start', (e, req: ChatStartRequest) => {
+    if (process.env.SMOKE === '1') smokeRequests.push(req)
     const model = getModels().find((m) => m.id === req.modelId)
     void runChat(e.sender, req, model ?? null)
   })

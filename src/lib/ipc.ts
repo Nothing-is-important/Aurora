@@ -98,6 +98,8 @@ export interface AuroraApi {
     rename: (id: string, title: string) => Promise<boolean>
     remove: (id: string) => Promise<boolean>
     setPinned: (id: string, pinned: boolean) => Promise<boolean>
+    getSystemPrompt: (id: string) => Promise<string>
+    setSystemPrompt: (id: string, text: string) => Promise<boolean>
     messages: {
       list: (conversationId: string) => Promise<MessageRow[]>
       upsert: (m: {
@@ -149,6 +151,7 @@ export interface AuroraApi {
     jsonOk: boolean
     pathOk: boolean
   }) => void
+  smokeNotifyPromptVerified: (p: { sent: boolean; sysOk: boolean }) => void
 }
 
 declare global {

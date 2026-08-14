@@ -245,6 +245,17 @@ export function useChat(opts: UseChatOptions): ChatController {
           .filter((m) => m.status !== 'error' && m.content !== '')
           .map((m) => ({ role: m.role, content: m.content }))
 
+        // 系统提示词注入：会话级优先，其次全局
+        const convSys = convId
+          ? ((await window.aurora.conversations.getSystemPrompt(convId)) ?? '')
+          : ''
+        const sysPrompt =
+          convSys.trim() ||
+          ((await window.aurora.settings.get('systemPrompt')) ?? '').trim()
+        if (sysPrompt) {
+          apiMessages.unshift({ role: 'system', content: sysPrompt })
+        }
+
         // 本轮用户消息：文本 + 附件内容（文本内联 / 图片多模态）
         const textFiles = files.filter((f) => f.isText && f.content)
         const imageFiles = files.filter((f) => f.isImage && f.dataUrl)
