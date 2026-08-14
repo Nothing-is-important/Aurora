@@ -57,12 +57,23 @@ export default function SettingsModal({
   const [saving, setSaving] = useState(false)
   const [sysPrompt, setSysPrompt] = useState('')
   const [sysSaved, setSysSaved] = useState(false)
+  const [whitelistText, setWhitelistText] = useState('')
+  const [wlSaved, setWlSaved] = useState(false)
 
   useEffect(() => {
     if (open) {
       void window.aurora.settings.get('systemPrompt').then((v) => {
         setSysPrompt(v ?? '')
         setSysSaved(false)
+      })
+      void window.aurora.settings.get('shellWhitelist').then((v) => {
+        try {
+          const arr = v ? JSON.parse(v) : []
+          setWhitelistText(Array.isArray(arr) ? arr.join('\n') : '')
+        } catch {
+          setWhitelistText('')
+        }
+        setWlSaved(false)
       })
     }
   }, [open])
@@ -71,6 +82,16 @@ export default function SettingsModal({
     await window.aurora.settings.set('systemPrompt', sysPrompt)
     setSysSaved(true)
     setTimeout(() => setSysSaved(false), 2000)
+  }
+
+  const saveWhitelist = async (): Promise<void> => {
+    const list = whitelistText
+      .split('\n')
+      .map((l) => l.trim())
+      .filter(Boolean)
+    await window.aurora.settings.set('shellWhitelist', JSON.stringify(list))
+    setWlSaved(true)
+    setTimeout(() => setWlSaved(false), 2000)
   }
 
   useEffect(() => {
@@ -250,6 +271,36 @@ export default function SettingsModal({
                       <Check size={12} strokeWidth={2.6} /> 已保存
                     </span>
                   )}
+                </div>
+              </div>
+
+              <div>
+                <label className={label}>
+                  系统命令白名单（每行一条，前缀匹配；以 * 结尾表示前缀通配）
+                </label>
+                <textarea
+                  data-shell-whitelist
+                  rows={4}
+                  value={whitelistText}
+                  onChange={(e) => setWhitelistText(e.target.value)}
+                  placeholder={'git \nnpm \necho'}
+                  className={`${field} resize-y font-mono text-[12px] leading-relaxed`}
+                />
+                <div className="mt-1.5 flex items-center gap-2">
+                  <button
+                    onClick={() => void saveWhitelist()}
+                    className="h-7 rounded-lg bg-apple-blue px-3.5 text-[12px] font-medium text-white transition-all duration-200 ease-spring hover:brightness-110 active:scale-[0.96]"
+                  >
+                    保存
+                  </button>
+                  {wlSaved && (
+                    <span className="flex items-center gap-1 text-[11.5px] text-apple-green">
+                      <Check size={12} strokeWidth={2.6} /> 已保存
+                    </span>
+                  )}
+                  <span className="text-[11px] text-black/35 dark:text-white/35">
+                    白名单内的命令执行时不再弹窗确认
+                  </span>
                 </div>
               </div>
 

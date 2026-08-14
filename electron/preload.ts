@@ -188,6 +188,8 @@ const api = {
   smokeNotifyChatDone: (): void => ipcRenderer.send('smoke:chat-done'),
   smokeNotifyToolsVerified: (p: { done: boolean; steps: number }): void =>
     ipcRenderer.send('smoke:tools-verified', p),
+  smokeNotifyShellVerified: (p: { done: boolean; shellOk: boolean }): void =>
+    ipcRenderer.send('smoke:shell-verified', p),
   smokeNotifyStopVerified: (p: { stoppedEarly: boolean; errored: boolean }): void =>
     ipcRenderer.send('smoke:stop-verified', p),
   smokeNotifyConvVerified: (p: {

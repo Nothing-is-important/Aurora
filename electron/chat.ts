@@ -151,7 +151,7 @@ async function runChat(
               resultSummary: '',
             },
           })
-          const r = executeTool(tc.name, args)
+          const r = await executeTool(tc.name, args)
           const summary = (r.ok ? r.result : r.error) ?? ''
           emit(wc, 'chat:tool', {
             requestId: req.requestId,
@@ -303,32 +303,53 @@ async function mockCallOnce(
     typeof lastUser?.content === 'string' ? lastUser.content : ''
   const hasToolResult = messages.some((m) => m.role === 'tool')
   const wantsFileDemo = userText.includes('hello.py') || userText.includes('工作目录')
+  const wantsShellDemo =
+    userText.includes('系统命令') || userText.includes('echo aurora')
+  const wantsPythonDemo =
+    userText.includes('6*7') || userText.includes('run_python')
+  const wantsToolDemo = wantsFileDemo || wantsShellDemo || wantsPythonDemo
 
-  if (wantsFileDemo && !hasToolResult) {
-    // 第一轮：演示工具调用（写文件）
-    const reasoning =
-      '用户想要在工作目录操作文件。我将使用 write_file 工具写入 hello.py，然后读取它确认内容。'
+  if (wantsToolDemo && !hasToolResult) {
+    // 第一轮：演示工具调用
+    let toolCall: ToolCall
+    let reasoning: string
+    if (wantsShellDemo) {
+      toolCall = {
+        id: 'call_mock_shell',
+        name: 'run_shell',
+        argsStr: JSON.stringify({ command: 'echo aurora-shell-ok' }),
+      }
+      reasoning =
+        '用户想演示系统命令执行。我将通过 run_shell 工具执行 echo 命令，验证确认流程与结果回传。'
+    } else if (wantsPythonDemo) {
+      toolCall = {
+        id: 'call_mock_py',
+        name: 'run_python',
+        argsStr: JSON.stringify({ code: 'print(6*7)' }),
+      }
+      reasoning =
+        '用户想验证 Python 代码执行。我将用 run_python 工具计算 6*7，并检查输出是否为 42。'
+    } else {
+      toolCall = {
+        id: 'call_mock_hello',
+        name: 'write_file',
+        argsStr: JSON.stringify({
+          path: 'hello.py',
+          content: 'print("hello from aurora")\n',
+        }),
+      }
+      reasoning =
+        '用户想要在工作目录操作文件。我将使用 write_file 工具写入 hello.py，然后读取它确认内容。'
+    }
     for (const ch of chunks(reasoning, 6)) {
       emit(wc, 'chat:delta', { requestId, reasoning: ch })
       await sleep(22, signal)
     }
     await sleep(120, signal)
-    return {
-      finish: 'tool_calls',
-      toolCalls: [
-        {
-          id: 'call_mock_hello',
-          name: 'write_file',
-          argsStr: JSON.stringify({
-            path: 'hello.py',
-            content: 'print("hello from aurora")\n',
-          }),
-        },
-      ],
-    }
+    return { finish: 'tool_calls', toolCalls: [toolCall] }
   }
 
-  // 正常流（第二轮会提及读取结果）
+  // 正常流（工具第二轮会提及执行结果）
   if (!hasToolResult) {
     const reasoning =
       '用户希望看到一个综合示例。我可以准备一段包含二级标题、Python 代码块、LaTeX 公式与列表的 Markdown 回复，用来验证流式渲染、语法高亮、复制按钮与 KaTeX 是否正常工作。'
@@ -338,38 +359,52 @@ async function mockCallOnce(
     }
     await sleep(120, signal)
   }
-  const intro = hasToolResult
-    ? '已通过工具完成文件操作：'
-    : '好的，下面是一个综合示例。'
-  const content = [
-    intro,
-    '',
-    hasToolResult
-      ? '我在工作目录写入了 hello.py 并读取确认，内容如下：'
-      : '## 快速示例',
-    '',
-    '```python',
-    'print("hello from aurora")',
-    '```',
-    '',
-    hasToolResult
-      ? '文件已就绪，可以继续让我修改或解释它。'
-      : '再验证一个公式，欧拉恒等式：',
-    '',
-    hasToolResult ? '' : '$$',
-    hasToolResult ? '' : 'e^{i\\pi} + 1 = 0',
-    hasToolResult ? '' : '$$',
-    '',
-    '要点：',
-    '',
-    '- **流式渲染**逐字出现',
-    hasToolResult ? '- **工具调用**已执行并回传结果' : '- 代码块带语法高亮与复制按钮',
-    hasToolResult ? '' : '- 公式由 KaTeX 渲染',
-    '',
-    hasToolResult ? '' : '以上全部来自本地 Mock 提供方，无需 API Key。',
-  ]
-    .filter((l) => l !== '')
-    .join('\n')
+  const content = hasToolResult
+    ? [
+        '已通过工具完成操作：',
+        '',
+        '工具已执行并返回结果，执行摘要：',
+        '',
+        '```',
+        'ok',
+        '```',
+        '',
+        '**工具调用**链路（模型发起 → 本地执行 → 结果回传）验证完成。',
+      ].join('\n')
+    : [
+        '好的，下面是一个综合示例。',
+        '',
+        '## 快速示例',
+        '',
+        '先看一个 Python 函数：',
+        '',
+        '```python',
+        'def fib(n):',
+        '    """返回前 n 个斐波那契数"""',
+        '    a, b = 0, 1',
+        '    out = []',
+        '    for _ in range(n):',
+        '        out.append(a)',
+        '        a, b = b, a + b',
+        '    return out',
+        '',
+        'print(fib(10))',
+        '```',
+        '',
+        '再验证一个公式，欧拉恒等式：',
+        '',
+        '$$',
+        'e^{i\\pi} + 1 = 0',
+        '$$',
+        '',
+        '要点：',
+        '',
+        '- **流式渲染**逐字出现',
+        '- 代码块带语法高亮与复制按钮',
+        '- 公式由 KaTeX 渲染',
+        '',
+        '以上全部来自本地 Mock 提供方，无需 API Key。',
+      ].join('\n')
 
   for (const ch of chunks(content, 8)) {
     onFirstToken?.()

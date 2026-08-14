@@ -151,6 +151,7 @@ export interface AuroraApi {
   }
   smokeNotifyChatDone: () => void
   smokeNotifyToolsVerified: (p: { done: boolean; steps: number }) => void
+  smokeNotifyShellVerified: (p: { done: boolean; shellOk: boolean }) => void
   smokeNotifyStopVerified: (p: { stoppedEarly: boolean; errored: boolean }) => void
   smokeNotifyConvVerified: (p: {
     listCount: number

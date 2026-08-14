@@ -30,6 +30,8 @@ import {
   upsertMessage,
 } from './db'
 import { registerChatIpc, getSmokeChatRequests } from './chat'
+import { isShellAllowed, runPython } from './tools'
+import { spawnSync } from 'child_process'
 
 const SMOKE = process.env.SMOKE === '1'
 const DEV_URL = process.env.VITE_DEV_SERVER_URL
@@ -418,6 +420,33 @@ async function runSmoke(w: BrowserWindow, errors: string[]): Promise<void> {
       )
     : false
 
+  // 等待系统命令端到端验证
+  let shellVerified: { done: boolean; shellOk: boolean } | null = null
+  let shellResolve: (() => void) | null = null
+  const shellDone = new Promise<void>((resolve) => {
+    shellResolve = resolve
+  })
+  ipcMain.on('smoke:shell-verified', (_e, p) => {
+    shellVerified = p
+    if (shellResolve) {
+      shellResolve()
+      shellResolve = null
+    }
+  })
+  await Promise.race([shellDone, new Promise((r) => setTimeout(r, 40000))])
+  report.shellVerified = shellVerified
+  // 白名单单元验证 + Python 可用性检测与直执行
+  report.whitelistUnitOk =
+    isShellAllowed('git status', []) === false &&
+    isShellAllowed('git status', ['git ']) === true &&
+    isShellAllowed('echo hi', ['echo*']) === true
+  const pyCheck = spawnSync('python', ['--version'], { encoding: 'utf-8' })
+  report.pythonAvailable = pyCheck.status === 0
+  if (report.pythonAvailable) {
+    const pr = await runPython('print(6*7)')
+    report.pythonResult = pr.ok ? pr.result : `ERR: ${pr.error}`
+  }
+
   // 浅色阶段
   nativeTheme.themeSource = 'light'
   await new Promise((r) => setTimeout(r, 1200))
@@ -467,7 +496,7 @@ async function runSmoke(w: BrowserWindow, errors: string[]): Promise<void> {
     failures.push(`检查器宽度异常: ${dom.inspectorW}`)
   if (dom.chatW < 600) failures.push(`对话区宽度异常: ${dom.chatW}`)
   if (dom.overflowX === true) failures.push('存在水平溢出')
-  if (dom.messages !== 8) failures.push(`冒烟消息数量错误: ${dom.messages}`)
+  if (dom.messages !== 10) failures.push(`冒烟消息数量错误: ${dom.messages}`)
   // 气泡宽度固定：应铺满消息容器（不随内容长度变化）
   if (dom.assistantBubbleW < 600)
     failures.push(`助手气泡未固定全宽: ${dom.assistantBubbleW}`)
@@ -616,8 +645,16 @@ async function runSmoke(w: BrowserWindow, errors: string[]): Promise<void> {
   if (!String(report.helloContent).includes('hello from aurora'))
     failures.push(`hello.py 内容异常: ${report.helloContent}`)
   if (report.toolStepsInDb !== true) failures.push('DB 中工具步骤未落盘')
-  if (dom.toolStepCards === 0) failures.push('消息内工具步骤卡片缺失')
+  if (dom.toolStepCards < 2) failures.push(`消息内工具步骤卡片不足: ${dom.toolStepCards}`)
   if (dom.inspectorToolStep !== true) failures.push('检查器工具 tab 步骤缺失')
+  // 系统命令断言
+  const shv = shellVerified as { done: boolean; shellOk: boolean } | null
+  if (!shv || shv.done !== true)
+    failures.push('系统命令端到端验证失败: ' + JSON.stringify(shv))
+  if (shv && shv.shellOk !== true) failures.push('shell 步骤结果未包含 aurora-shell-ok')
+  if (report.whitelistUnitOk !== true) failures.push('命令白名单匹配逻辑异常')
+  if (report.pythonAvailable === true && !String(report.pythonResult).includes('42'))
+    failures.push(`run_python 输出异常: ${report.pythonResult}`)
   if (dom.editStarted !== true || dom.editFlowDone !== true)
     failures.push('编辑重发流程未完成')
   if (dom.editMsgs !== 2) failures.push(`编辑后消息数错误: ${dom.editMsgs}`)

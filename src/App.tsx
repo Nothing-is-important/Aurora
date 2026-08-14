@@ -177,6 +177,7 @@ function AppInner() {
 
   // ---- 冒烟第七阶段：工具调用端到端 ----
   const phase7 = useRef(false)
+  const [toolsDone, setToolsDone] = useState(false)
   useEffect(() => {
     if (!window.aurora.smoke || !promptDone || phase7.current) return
     phase7.current = true
@@ -190,8 +191,32 @@ function AppInner() {
       )
       const steps = messagesRef.current.flatMap((m) => m.toolSteps ?? []).length
       window.aurora.smokeNotifyToolsVerified({ done: ok, steps })
+      setToolsDone(true)
     })()
   }, [promptDone, chat])
+
+  // ---- 冒烟第八阶段：系统命令端到端 ----
+  const phase8 = useRef(false)
+  useEffect(() => {
+    if (!window.aurora.smoke || !toolsDone || phase8.current) return
+    phase8.current = true
+    void (async () => {
+      chat.send('请演示系统命令执行：用 echo 输出 aurora-shell-ok')
+      const ok = await waitFor(
+        () =>
+          streamingAppRef.current === null &&
+          messagesRef.current.length === 10,
+        30000,
+      )
+      const shellSteps = messagesRef.current.flatMap((m) =>
+        (m.toolSteps ?? []).filter((s) => s.name === 'run_shell'),
+      )
+      const shellOk =
+        shellSteps.length > 0 &&
+        shellSteps.some((s) => s.resultSummary.includes('aurora-shell-ok'))
+      window.aurora.smokeNotifyShellVerified({ done: ok, shellOk })
+    })()
+  }, [toolsDone, chat])
 
   const handleSelect = useCallback((id: string) => {
     setActiveId(id)
