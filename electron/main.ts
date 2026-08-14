@@ -6,6 +6,7 @@ import {
   globalShortcut,
   ipcMain,
   nativeTheme,
+  shell,
 } from 'electron'
 import type { NativeImage } from 'electron'
 import * as path from 'path'
@@ -182,6 +183,7 @@ const DOM_AUDIT = `
     userMsg: !!document.querySelector('[data-role="user"]'),
     assistantMsg: !!document.querySelector('[data-role="assistant"]'),
     toolStepCards: document.querySelectorAll('[data-tool-step]').length,
+    refCards: document.querySelectorAll('[data-ref]').length,
     assistantBubbleW: (() => {
       const el = document.querySelector('[data-role="assistant"] > div')
       return el ? Math.round(el.getBoundingClientRect().width) : 0
@@ -239,7 +241,13 @@ const DOM_AUDIT = `
   await sleep(300)
   out.paletteClosed = !document.querySelector('[data-command-palette]')
 
-  // 检查器：工具 tab 与信息 tab
+  // 检查器：引用 tab / 工具 tab / 信息 tab
+  const refsTab = Array.from(document.querySelectorAll('aside button')).find((b) =>
+    (b.textContent || '').includes('引用')
+  )
+  if (refsTab) refsTab.click()
+  await sleep(300)
+  out.inspectorRefs = document.querySelectorAll('[data-inspector-ref]').length
   const toolsTab = Array.from(document.querySelectorAll('aside button')).find((b) =>
     (b.textContent || '').includes('工具调用')
   )
@@ -447,6 +455,31 @@ async function runSmoke(w: BrowserWindow, errors: string[]): Promise<void> {
     report.pythonResult = pr.ok ? pr.result : `ERR: ${pr.error}`
   }
 
+  // 等待联网搜索端到端验证
+  let netVerified: { done: boolean; refsOk: boolean } | null = null
+  let netResolve: (() => void) | null = null
+  const netDone = new Promise<void>((resolve) => {
+    netResolve = resolve
+  })
+  ipcMain.on('smoke:net-verified', (_e, p) => {
+    netVerified = p
+    if (netResolve) {
+      netResolve()
+      netResolve = null
+    }
+  })
+  await Promise.race([netDone, new Promise((r) => setTimeout(r, 40000))])
+  report.netVerified = netVerified
+  // 真实网络探测（仅记录，不作断言）
+  try {
+    const probe = await fetch('https://www.bing.com', {
+      signal: AbortSignal.timeout(5000),
+    })
+    report.realNetworkOk = probe.ok
+  } catch {
+    report.realNetworkOk = false
+  }
+
   // 浅色阶段
   nativeTheme.themeSource = 'light'
   await new Promise((r) => setTimeout(r, 1200))
@@ -496,7 +529,7 @@ async function runSmoke(w: BrowserWindow, errors: string[]): Promise<void> {
     failures.push(`检查器宽度异常: ${dom.inspectorW}`)
   if (dom.chatW < 600) failures.push(`对话区宽度异常: ${dom.chatW}`)
   if (dom.overflowX === true) failures.push('存在水平溢出')
-  if (dom.messages !== 10) failures.push(`冒烟消息数量错误: ${dom.messages}`)
+  if (dom.messages !== 12) failures.push(`冒烟消息数量错误: ${dom.messages}`)
   // 气泡宽度固定：应铺满消息容器（不随内容长度变化）
   if (dom.assistantBubbleW < 600)
     failures.push(`助手气泡未固定全宽: ${dom.assistantBubbleW}`)
@@ -655,6 +688,13 @@ async function runSmoke(w: BrowserWindow, errors: string[]): Promise<void> {
   if (report.whitelistUnitOk !== true) failures.push('命令白名单匹配逻辑异常')
   if (report.pythonAvailable === true && !String(report.pythonResult).includes('42'))
     failures.push(`run_python 输出异常: ${report.pythonResult}`)
+  // 联网能力断言
+  const nv = netVerified as { done: boolean; refsOk: boolean } | null
+  if (!nv || nv.done !== true)
+    failures.push('联网搜索端到端验证失败: ' + JSON.stringify(nv))
+  if (nv && nv.refsOk !== true) failures.push('搜索引用数量不足 3')
+  if (dom.refCards < 3) failures.push(`消息内引用卡片不足: ${dom.refCards}`)
+  if (dom.inspectorRefs < 3) failures.push(`检查器引用 tab 不足: ${dom.inspectorRefs}`)
   if (dom.editStarted !== true || dom.editFlowDone !== true)
     failures.push('编辑重发流程未完成')
   if (dom.editMsgs !== 2) failures.push(`编辑后消息数错误: ${dom.editMsgs}`)
@@ -751,6 +791,13 @@ ipcMain.handle('messages:deleteFrom', (_e, conversationId: string, fromId: strin
 // ---- 剪贴板（走主进程，避免渲染层 clipboard 权限问题）----
 ipcMain.handle('clipboard:writeText', (_e, text: string) => {
   clipboard.writeText(text)
+  return true
+})
+
+// ---- 打开外部链接 ----
+ipcMain.handle('app:openExternal', (_e, url: string) => {
+  if (SMOKE) return true // 冒烟不真打开浏览器
+  if (/^https?:\/\//i.test(url)) void shell.openExternal(url)
   return true
 })
 

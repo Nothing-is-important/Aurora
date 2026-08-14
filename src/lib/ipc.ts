@@ -34,12 +34,19 @@ export interface ConversationRow {
   updatedAt: number
 }
 
+export interface SearchRef {
+  title: string
+  url: string
+  snippet?: string
+}
+
 export interface ToolStep {
   id: string
   name: string
   args: Record<string, unknown>
   status: 'running' | 'done' | 'error'
   resultSummary: string
+  refs?: SearchRef[]
 }
 
 export interface MessageRow {
@@ -135,6 +142,7 @@ export interface AuroraApi {
   clipboard: {
     writeText: (text: string) => Promise<boolean>
   }
+  openExternal: (url: string) => Promise<boolean>
   chat: {
     start: (req: ChatStartRequest) => void
     stop: (requestId: string) => void
@@ -152,6 +160,7 @@ export interface AuroraApi {
   smokeNotifyChatDone: () => void
   smokeNotifyToolsVerified: (p: { done: boolean; steps: number }) => void
   smokeNotifyShellVerified: (p: { done: boolean; shellOk: boolean }) => void
+  smokeNotifyNetVerified: (p: { done: boolean; refsOk: boolean }) => void
   smokeNotifyStopVerified: (p: { stoppedEarly: boolean; errored: boolean }) => void
   smokeNotifyConvVerified: (p: {
     listCount: number

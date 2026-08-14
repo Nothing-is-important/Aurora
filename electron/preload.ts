@@ -36,12 +36,19 @@ export interface ConversationRow {
   updatedAt: number
 }
 
+export interface SearchRef {
+  title: string
+  url: string
+  snippet?: string
+}
+
 export interface ToolStep {
   id: string
   name: string
   args: Record<string, unknown>
   status: 'running' | 'done' | 'error'
   resultSummary: string
+  refs?: SearchRef[]
 }
 
 export interface MessageRow {
@@ -166,6 +173,8 @@ const api = {
     writeText: (text: string): Promise<boolean> =>
       ipcRenderer.invoke('clipboard:writeText', text),
   },
+  openExternal: (url: string): Promise<boolean> =>
+    ipcRenderer.invoke('app:openExternal', url),
   chat: {
     start: (req: ChatStartRequest): void => ipcRenderer.send('chat:start', req),
     stop: (requestId: string): void =>
@@ -190,6 +199,8 @@ const api = {
     ipcRenderer.send('smoke:tools-verified', p),
   smokeNotifyShellVerified: (p: { done: boolean; shellOk: boolean }): void =>
     ipcRenderer.send('smoke:shell-verified', p),
+  smokeNotifyNetVerified: (p: { done: boolean; refsOk: boolean }): void =>
+    ipcRenderer.send('smoke:net-verified', p),
   smokeNotifyStopVerified: (p: { stoppedEarly: boolean; errored: boolean }): void =>
     ipcRenderer.send('smoke:stop-verified', p),
   smokeNotifyConvVerified: (p: {

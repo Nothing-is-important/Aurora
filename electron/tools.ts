@@ -100,12 +100,177 @@ export const TOOL_DEFS = [
       },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'web_search',
+      description: '联网搜索并返回结果列表（标题、链接、摘要）',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: '搜索关键词' },
+        },
+        required: ['query'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'fetch_url',
+      description: '抓取网页内容并提取正文文本',
+      parameters: {
+        type: 'object',
+        properties: {
+          url: { type: 'string', description: '要抓取的网页 URL' },
+        },
+        required: ['url'],
+      },
+    },
+  },
 ]
 
 export interface ToolExecResult {
   ok: boolean
   result?: string
   error?: string
+  refs?: SearchRef[]
+}
+
+export interface SearchRef {
+  title: string
+  url: string
+  snippet?: string
+}
+
+// ---- 联网能力 ----
+function htmlToText(html: string): string {
+  return html
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+const UA =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36'
+
+export async function webSearch(
+  query: string,
+): Promise<ToolExecResult & { refs?: SearchRef[] }> {
+  if (process.env.SMOKE === '1') {
+    return {
+      ok: true,
+      result: '（冒烟模拟）搜索到 3 条相关结果。',
+      refs: [
+        {
+          title: 'DeepSeek Harness（社区版）',
+          url: 'https://github.com/HenryZ838978/deepseek-harness',
+          snippet: 'MCP server + CLI + SKILL.md',
+        },
+        {
+          title: 'tylerbuilds/deepseek-harness',
+          url: 'https://github.com/tylerbuilds/deepseek-harness',
+          snippet: 'Releases 与源码',
+        },
+        {
+          title: 'DeepSeek Harness 实测报告',
+          url: 'https://example.com/review',
+          snippet: 'Agent 运行时评测',
+        },
+      ],
+    }
+  }
+  try {
+    const ac = new AbortController()
+    const timer = setTimeout(() => ac.abort(), 15000)
+    const q = encodeURIComponent(query)
+    const res = await fetch(`https://cn.bing.com/search?q=${q}&setlang=zh-hans`, {
+      signal: ac.signal,
+      headers: { 'User-Agent': UA },
+    })
+    clearTimeout(timer)
+    if (!res.ok) return { ok: false, error: `HTTP ${res.status}` }
+    const html = await res.text()
+    const refs: SearchRef[] = []
+    const blocks = html.split('<li class="b_algo"')
+    for (let i = 1; i < Math.min(blocks.length, 9); i++) {
+      const b = blocks[i]
+      const titleM = /<h2[^>]*><a[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/.exec(b)
+      const snipM = /<p[^>]*>([\s\S]*?)<\/p>/.exec(b)
+      if (titleM) {
+        refs.push({
+          title: htmlToText(titleM[2]).slice(0, 120),
+          url: titleM[1],
+          snippet: snipM ? htmlToText(snipM[1]).slice(0, 200) : '',
+        })
+      }
+    }
+    if (!refs.length) {
+      return { ok: false, error: '未解析到搜索结果，请稍后重试或检查网络' }
+    }
+    return {
+      ok: true,
+      result: refs
+        .map((r, i) => `${i + 1}. ${r.title}\n${r.url}\n${r.snippet}`)
+        .join('\n\n'),
+      refs,
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    if (msg.toLowerCase().includes('abort')) {
+      return { ok: false, error: '搜索超时（15 秒）' }
+    }
+    return { ok: false, error: msg.slice(0, 200) }
+  }
+}
+
+export async function fetchUrl(
+  url: string,
+): Promise<ToolExecResult & { refs?: SearchRef[] }> {
+  if (process.env.SMOKE === '1') {
+    return {
+      ok: true,
+      result: '（冒烟模拟）这是示例网页的正文内容，用于验证网页抓取工具链路。',
+      refs: [{ title: '示例网页', url }],
+    }
+  }
+  try {
+    const ac = new AbortController()
+    const timer = setTimeout(() => ac.abort(), 15000)
+    const res = await fetch(url, {
+      signal: ac.signal,
+      redirect: 'follow',
+      headers: { 'User-Agent': UA },
+    })
+    clearTimeout(timer)
+    if (!res.ok) return { ok: false, error: `HTTP ${res.status}` }
+    const ct = res.headers.get('content-type') ?? ''
+    const buf = await res.arrayBuffer()
+    if (buf.byteLength > 2 * 1024 * 1024) {
+      return { ok: false, error: '页面过大（>2MB），已拒绝抓取' }
+    }
+    const text = new TextDecoder().decode(buf)
+    const body = ct.includes('html') ? htmlToText(text) : text
+    return {
+      ok: true,
+      result: body.slice(0, 30000),
+      refs: [{ title: url, url }],
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    if (msg.toLowerCase().includes('abort')) {
+      return { ok: false, error: '抓取超时（15 秒）' }
+    }
+    return { ok: false, error: msg.slice(0, 200) }
+  }
 }
 
 function execAsync(
@@ -271,6 +436,16 @@ export async function executeTool(
       const allowed = await confirmShell(command)
       if (!allowed) return { ok: false, error: '用户拒绝了该命令的执行' }
       return await runShell(command)
+    }
+    if (name === 'web_search') {
+      const query = String(args.query ?? '').trim()
+      if (!query) return { ok: false, error: '搜索关键词为空' }
+      return await webSearch(query)
+    }
+    if (name === 'fetch_url') {
+      const url = String(args.url ?? '').trim()
+      if (!/^https?:\/\//i.test(url)) return { ok: false, error: 'URL 需以 http(s):// 开头' }
+      return await fetchUrl(url)
     }
     return { ok: false, error: `未知工具: ${name}` }
   } catch (err) {

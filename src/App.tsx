@@ -197,6 +197,7 @@ function AppInner() {
 
   // ---- 冒烟第八阶段：系统命令端到端 ----
   const phase8 = useRef(false)
+  const [shellDone, setShellDone] = useState(false)
   useEffect(() => {
     if (!window.aurora.smoke || !toolsDone || phase8.current) return
     phase8.current = true
@@ -215,8 +216,29 @@ function AppInner() {
         shellSteps.length > 0 &&
         shellSteps.some((s) => s.resultSummary.includes('aurora-shell-ok'))
       window.aurora.smokeNotifyShellVerified({ done: ok, shellOk })
+      setShellDone(true)
     })()
   }, [toolsDone, chat])
+
+  // ---- 冒烟第九阶段：联网搜索端到端 ----
+  const phase9 = useRef(false)
+  useEffect(() => {
+    if (!window.aurora.smoke || !shellDone || phase9.current) return
+    phase9.current = true
+    void (async () => {
+      chat.send('请联网搜索 deepseek-harness 的开源方案')
+      const ok = await waitFor(
+        () =>
+          streamingAppRef.current === null &&
+          messagesRef.current.length === 12,
+        30000,
+      )
+      const refs = messagesRef.current
+        .flatMap((m) => m.toolSteps ?? [])
+        .flatMap((s) => s.refs ?? [])
+      window.aurora.smokeNotifyNetVerified({ done: ok, refsOk: refs.length >= 3 })
+    })()
+  }, [shellDone, chat])
 
   const handleSelect = useCallback((id: string) => {
     setActiveId(id)

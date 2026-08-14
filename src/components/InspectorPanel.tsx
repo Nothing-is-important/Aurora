@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   Check,
+  ExternalLink,
   FileJson,
   FileText,
   Gauge,
@@ -11,7 +12,7 @@ import {
   Wrench,
   X,
 } from 'lucide-react'
-import type { ConversationRow, ModelConfig } from '../lib/ipc'
+import type { ConversationRow, ModelConfig, SearchRef } from '../lib/ipc'
 import type { ChatMessage } from '../lib/chat'
 import { estimateCost, formatCost, pricingFor } from '../lib/pricing'
 
@@ -91,6 +92,18 @@ export default function InspectorPanel({
   }
 
   const empty = EMPTY[tab]
+
+  const allRefs = useMemo<SearchRef[]>(() => {
+    const map = new Map<string, SearchRef>()
+    for (const m of messages) {
+      for (const s of m.toolSteps ?? []) {
+        for (const r of s.refs ?? []) {
+          if (!map.has(r.url)) map.set(r.url, r)
+        }
+      }
+    }
+    return [...map.values()]
+  }, [messages])
 
   const doExport = async (format: 'md' | 'json'): Promise<void> => {
     if (!conversation) return
@@ -333,17 +346,43 @@ export default function InspectorPanel({
           </div>
         )
       ) : tab === 'refs' ? (
-        <div className="flex flex-1 flex-col items-center justify-center gap-2.5 px-8 pb-16 text-center">
-          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-black/[0.04] text-black/25 dark:bg-white/[0.07] dark:text-white/30">
-            <Link2 size={19} strokeWidth={1.8} />
+        allRefs.length > 0 ? (
+          <div className="flex-1 space-y-1.5 overflow-y-auto px-3 py-3">
+            {allRefs.map((r) => (
+              <button
+                key={r.url}
+                data-inspector-ref
+                onClick={() => void window.aurora.openExternal(r.url)}
+                className="block w-full rounded-xl bg-black/[0.035] px-3 py-2.5 text-left transition-colors hover:bg-black/[0.06] dark:bg-white/[0.05] dark:hover:bg-white/[0.09]"
+              >
+                <span className="flex items-center gap-1.5 text-[12px] font-medium text-apple-blue">
+                  <ExternalLink size={11} strokeWidth={2.2} className="shrink-0" />
+                  <span className="truncate">{r.title}</span>
+                </span>
+                <span className="mt-0.5 block truncate text-[10.5px] text-black/35 dark:text-white/35">
+                  {r.url}
+                </span>
+                {r.snippet && (
+                  <span className="mt-1 line-clamp-2 block text-[11px] leading-relaxed text-black/55 dark:text-white/55">
+                    {r.snippet}
+                  </span>
+                )}
+              </button>
+            ))}
           </div>
-          <p className="text-[13px] font-medium text-black/60 dark:text-white/60">
-            暂无引用
-          </p>
-          <p className="text-[12px] leading-relaxed text-black/35 dark:text-white/35">
-            知识库检索到的文档片段会显示在这里
-          </p>
-        </div>
+        ) : (
+          <div className="flex flex-1 flex-col items-center justify-center gap-2.5 px-8 pb-16 text-center">
+            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-black/[0.04] text-black/25 dark:bg-white/[0.07] dark:text-white/30">
+              <Link2 size={19} strokeWidth={1.8} />
+            </div>
+            <p className="text-[13px] font-medium text-black/60 dark:text-white/60">
+              暂无引用
+            </p>
+            <p className="text-[12px] leading-relaxed text-black/35 dark:text-white/35">
+              联网搜索与网页抓取得到的来源会显示在这里
+            </p>
+          </div>
+        )
       ) : (
         <div className="flex flex-1 flex-col items-center justify-center gap-2.5 px-8 pb-16 text-center">
           <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-black/[0.04] text-black/25 dark:bg-white/[0.07] dark:text-white/30">

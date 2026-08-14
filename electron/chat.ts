@@ -161,6 +161,7 @@ async function runChat(
               args,
               status: r.ok ? 'done' : 'error',
               resultSummary: summary.slice(0, 800),
+              refs: r.refs ?? [],
             },
           })
           toolMessages.push({
@@ -307,7 +308,10 @@ async function mockCallOnce(
     userText.includes('系统命令') || userText.includes('echo aurora')
   const wantsPythonDemo =
     userText.includes('6*7') || userText.includes('run_python')
-  const wantsToolDemo = wantsFileDemo || wantsShellDemo || wantsPythonDemo
+  const wantsSearchDemo = userText.includes('搜索')
+  const wantsFetchDemo = userText.includes('抓取')
+  const wantsToolDemo =
+    wantsFileDemo || wantsShellDemo || wantsPythonDemo || wantsSearchDemo || wantsFetchDemo
 
   if (wantsToolDemo && !hasToolResult) {
     // 第一轮：演示工具调用
@@ -329,6 +333,22 @@ async function mockCallOnce(
       }
       reasoning =
         '用户想验证 Python 代码执行。我将用 run_python 工具计算 6*7，并检查输出是否为 42。'
+    } else if (wantsSearchDemo) {
+      toolCall = {
+        id: 'call_mock_search',
+        name: 'web_search',
+        argsStr: JSON.stringify({ query: 'deepseek-harness 开源方案' }),
+      }
+      reasoning =
+        '用户想了解 deepseek-harness 的开源方案。我将使用 web_search 工具搜索并整理引用来源。'
+    } else if (wantsFetchDemo) {
+      toolCall = {
+        id: 'call_mock_fetch',
+        name: 'fetch_url',
+        argsStr: JSON.stringify({ url: 'https://example.com/article' }),
+      }
+      reasoning =
+        '用户想抓取网页内容。我将使用 fetch_url 工具抓取并提取正文。'
     } else {
       toolCall = {
         id: 'call_mock_hello',

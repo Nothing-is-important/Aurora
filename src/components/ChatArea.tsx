@@ -8,6 +8,7 @@ import {
   ChevronDown,
   Code2,
   Copy,
+  ExternalLink,
   FileText,
   Lightbulb,
   Loader2,
@@ -57,38 +58,64 @@ function AssistantBubble({
             <div
               key={s.id}
               data-tool-step
-              className={`flex items-center gap-2 rounded-xl border px-3 py-2 text-[12px] ${
+              className={`rounded-xl border px-3 py-2 text-[12px] ${
                 s.status === 'error'
                   ? 'border-apple-red/25 bg-apple-red/[0.07]'
                   : 'border-black/[0.07] bg-black/[0.035] dark:border-white/[0.09] dark:bg-white/[0.05]'
               }`}
             >
-              <Wrench
-                size={13}
-                strokeWidth={2}
-                className={`shrink-0 ${
-                  s.status === 'error'
-                    ? 'text-apple-red'
-                    : s.status === 'done'
-                      ? 'text-apple-green'
-                      : 'text-apple-blue'
-                }`}
-              />
-              <span className="shrink-0 font-mono text-[11.5px] font-semibold text-black/70 dark:text-white/75">
-                {s.name}
-              </span>
-              <span className="min-w-0 flex-1 truncate text-[11px] text-black/45 dark:text-white/45">
-                {s.resultSummary || JSON.stringify(s.args).slice(0, 80)}
-              </span>
-              <span className="shrink-0">
-                {s.status === 'running' ? (
-                  <Loader2 size={13} className="animate-spin text-apple-blue" />
-                ) : s.status === 'done' ? (
-                  <Check size={13} strokeWidth={2.6} className="text-apple-green" />
-                ) : (
-                  <X size={13} strokeWidth={2.6} className="text-apple-red" />
-                )}
-              </span>
+              <div className="flex items-center gap-2">
+                <Wrench
+                  size={13}
+                  strokeWidth={2}
+                  className={`shrink-0 ${
+                    s.status === 'error'
+                      ? 'text-apple-red'
+                      : s.status === 'done'
+                        ? 'text-apple-green'
+                        : 'text-apple-blue'
+                  }`}
+                />
+                <span className="shrink-0 font-mono text-[11.5px] font-semibold text-black/70 dark:text-white/75">
+                  {s.name}
+                </span>
+                <span className="min-w-0 flex-1 truncate text-[11px] text-black/45 dark:text-white/45">
+                  {s.resultSummary || JSON.stringify(s.args).slice(0, 80)}
+                </span>
+                <span className="shrink-0">
+                  {s.status === 'running' ? (
+                    <Loader2 size={13} className="animate-spin text-apple-blue" />
+                  ) : s.status === 'done' ? (
+                    <Check size={13} strokeWidth={2.6} className="text-apple-green" />
+                  ) : (
+                    <X size={13} strokeWidth={2.6} className="text-apple-red" />
+                  )}
+                </span>
+              </div>
+              {s.refs && s.refs.length > 0 && (
+                <div className="mt-1.5 space-y-0.5 border-t border-black/[0.05] pt-1.5 dark:border-white/[0.07]">
+                  {s.refs.map((r, i) => (
+                    <button
+                      key={i}
+                      data-ref
+                      onClick={() => void window.aurora.openExternal(r.url)}
+                      className="flex w-full items-center gap-1.5 rounded-lg px-1.5 py-1 text-left transition-colors hover:bg-black/[0.04] dark:hover:bg-white/[0.06]"
+                    >
+                      <ExternalLink
+                        size={11}
+                        strokeWidth={2.2}
+                        className="shrink-0 text-apple-blue"
+                      />
+                      <span className="min-w-0 flex-1 truncate text-[11px] text-apple-blue/90">
+                        {r.title}
+                      </span>
+                      <span className="shrink-0 text-[10px] text-black/30 dark:text-white/30">
+                        {r.snippet ? r.snippet.slice(0, 30) + '…' : ''}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
           ))}
         </div>
