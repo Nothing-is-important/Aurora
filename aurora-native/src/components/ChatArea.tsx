@@ -138,34 +138,44 @@ export default function ChatArea({
           </button>
           {menuOpen && llm && (
             <div className="absolute left-0 top-9 z-30 max-h-72 w-64 overflow-y-auto rounded-xl border border-black/[0.08] bg-white/95 p-1.5 shadow-glass backdrop-blur-2xl dark:border-white/[0.1] dark:bg-[#1c1c23]/95">
-              {llm.providers.map((p) => (
-                <div key={p.id}>
-                  <p className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-black/35 dark:text-white/35">
-                    {p.name}
-                  </p>
-                  {p.models.map((m) => (
-                    <button
-                      key={m.id}
-                      onClick={() => {
-                        setMenuOpen(false)
-                        void onLlmSelect(p.id, m.id)
-                      }}
-                      className={`flex w-full items-center justify-between rounded-lg px-2 py-1.5 text-left text-[12px] transition-colors ${
-                        llm.current.provider === p.id && llm.current.model === m.id
-                          ? 'bg-apple-blue/12 font-medium text-apple-blue dark:bg-apple-blue/20'
-                          : 'text-black/70 hover:bg-black/[0.05] dark:text-white/70 dark:hover:bg-white/[0.06]'
-                      }`}
-                    >
-                      {m.name}
-                      {m.contextWindow ? (
-                        <span className="text-[9.5px] text-black/35 dark:text-white/35">
-                          {Math.round(m.contextWindow / 1024)}K
-                        </span>
-                      ) : null}
-                    </button>
-                  ))}
-                </div>
-              ))}
+              {llm.providers.filter((p) => p.hasKey && p.models.length > 0).length === 0 ? (
+                <p className="px-2 py-3 text-center text-[11.5px] leading-relaxed text-black/40 dark:text-white/40">
+                  暂无已配置密钥的提供商。
+                  <br />
+                  点右上角设置 → 填入 API Key 并获取模型。
+                </p>
+              ) : (
+                llm.providers
+                  .filter((p) => p.hasKey && p.models.length > 0)
+                  .map((p) => (
+                    <div key={p.id}>
+                      <p className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-black/35 dark:text-white/35">
+                        {p.name}
+                      </p>
+                      {p.models.map((m) => (
+                        <button
+                          key={m.id}
+                          onClick={() => {
+                            setMenuOpen(false)
+                            void onLlmSelect(p.id, m.id)
+                          }}
+                          className={`flex w-full items-center justify-between rounded-lg px-2 py-1.5 text-left text-[12px] transition-colors ${
+                            llm.current.provider === p.id && llm.current.model === m.id
+                              ? 'bg-apple-blue/12 font-medium text-apple-blue dark:bg-apple-blue/20'
+                              : 'text-black/70 hover:bg-black/[0.05] dark:text-white/70 dark:hover:bg-white/[0.06]'
+                          }`}
+                        >
+                          {m.name}
+                          {m.contextWindow ? (
+                            <span className="text-[9.5px] text-black/35 dark:text-white/35">
+                              {Math.round(m.contextWindow / 1024)}K
+                            </span>
+                          ) : null}
+                        </button>
+                      ))}
+                    </div>
+                  ))
+              )}
             </div>
           )}
         </div>

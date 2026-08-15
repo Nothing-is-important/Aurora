@@ -63,6 +63,7 @@ declare global {
       llm: {
         state: () => Promise<LlmState>
         select: (provider: string, model: string) => Promise<LlmState>
+        discover: (providerId: string) => Promise<LlmDiscoverResult>
       }
       credentials: {
         has: (ref: string) => Promise<boolean>
@@ -85,7 +86,9 @@ declare global {
 export interface LlmModelInfo {
   id: string
   name: string
+  description?: string
   contextWindow?: number
+  maxTokens?: number
 }
 
 export interface LlmProviderInfo {
@@ -93,10 +96,20 @@ export interface LlmProviderInfo {
   name: string
   settingsNs: string
   live: boolean
+  apiKeyEnv: string | null
+  hasKey: boolean
   models: LlmModelInfo[]
 }
 
 export interface LlmState {
   providers: LlmProviderInfo[]
   current: { provider: string; model: string }
+}
+
+export interface LlmDiscoverResult {
+  ok: boolean
+  error?: string
+  models: LlmModelInfo[]
+  elapsedMs: number
+  source?: 'catalog' | 'endpoint'
 }

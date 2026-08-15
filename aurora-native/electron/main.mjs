@@ -140,7 +140,7 @@ ipcMain.handle('app:settings:set', async (_e, patch) => {
 })
 
 // ---------- 模型与凭据桥 ----------
-function llmState() {
+async function llmState() {
   const c = engine()
   const configured = (c.llm.listConfigurableProviders?.() ?? []).map((p) => ({
     id: p.provider,
@@ -154,20 +154,98 @@ function llmState() {
   } catch {
     /* 无选择 */
   }
-  // 每个提供商的模型目录（从 settings 命名空间的解析值取 models）
-  const providers = configured.map((p) => {
-    let models = []
+  // 每个提供商：密钥引用、密钥状态、模型目录（含上下文/输出上限等简要信息）
+  const providers = []
+  for (const p of configured) {
+    let apiKeyEnv = null
+    let hasKey = false
     try {
       const desc = c.settings.describe({ redactSecrets: true }).find((x) => x.ns === p.settingsNs)
-      models = Array.isArray(desc?.value?.models)
-        ? desc.value.models.map((m) => ({ id: m.id, name: m.name ?? m.id, contextWindow: m.contextWindow }))
-        : []
+      apiKeyEnv = typeof desc?.value?.apiKeyEnv === 'string' ? desc.value.apiKeyEnv : null
+      if (apiKeyEnv) {
+        hasKey = (await c.credentials.resolve(apiKeyEnv)) !== undefined
+      }
     } catch {
-      /* 目录缺失 */
+      /* 命名空间缺失 */
     }
-    return { ...p, live: live.has(p.id), models }
-  })
+    const models = []
+    try {
+      const listed = await c.llm.listModels(p.id)
+      for (const m of listed) {
+        let contextWindow
+        let maxTokens
+        let description = m.description
+        try {
+          const info = await c.llm.resolveModelInfo(p.id, m.id)
+          contextWindow = info?.context?.contextWindow
+          maxTokens = info?.defaultMaxTokens
+        } catch {
+          /* 详情不可用 */
+        }
+        models.push({ id: m.id, name: m.name ?? m.id, description, contextWindow, maxTokens })
+      }
+    } catch {
+      /* 无目录 */
+    }
+    providers.push({ ...p, live: live.has(p.id), apiKeyEnv, hasKey, models })
+  }
   return { providers, current }
+}
+
+async function llmDiscover(providerId) {
+  const c = engine()
+  const t0 = Date.now()
+  const models = []
+  let source = 'catalog'
+  try {
+    const listed = await c.llm.listModels(providerId)
+    for (const m of listed) {
+      let contextWindow
+      let maxTokens
+      try {
+        const info = await c.llm.resolveModelInfo(providerId, m.id)
+        contextWindow = info?.context?.contextWindow
+        maxTokens = info?.defaultMaxTokens
+      } catch {
+        /* 详情不可用 */
+      }
+      models.push({
+        id: m.id,
+        name: m.name ?? m.id,
+        description: m.description,
+        contextWindow,
+        maxTokens,
+      })
+    }
+  } catch {
+    /* 目录不可用：尝试端点发现 */
+  }
+  if (models.length === 0) {
+    const entry = (c.llm.listConfigurableProviders?.() ?? []).find((p) => p.provider === providerId)
+    if (entry) {
+      try {
+        const desc = c.settings.describe({ redactSecrets: true }).find((x) => x.ns === entry.settingsNs)
+        const apiKeyEnv = typeof desc?.value?.apiKeyEnv === 'string' ? desc.value.apiKeyEnv : null
+        const key = apiKeyEnv ? await c.credentials.resolve(apiKeyEnv) : undefined
+        const found = await c.llm.discoverModels(entry.settingsNs, {
+          provider: providerId,
+          ...(key?.value ? { apiKey: key.value } : {}),
+        })
+        source = 'endpoint'
+        for (const m of found) {
+          models.push({
+            id: m.id,
+            name: m.name ?? m.id,
+            contextWindow: m.contextWindow,
+            maxTokens: m.maxTokens,
+          })
+        }
+      } catch (err) {
+        return { ok: false, error: err?.message ?? String(err), models: [], elapsedMs: Date.now() - t0 }
+      }
+    }
+  }
+  return { ok: true, models, elapsedMs: Date.now() - t0, source }
 }
 
 function registerSessionEvents() {
@@ -189,10 +267,13 @@ function registerBridge() {
   ipcMain.handle('chat:send', (_e, sessionId, text) => sendMessage(sessionId, text))
   ipcMain.on('chat:stop', (_e, sessionId) => stopAgent(sessionId))
   ipcMain.handle('llm:state', () => llmState())
-  ipcMain.handle('llm:select', (_e, provider, model) => {
-    engine().agentDefaultModel.saveSelection({ provider, model })
+  ipcMain.handle('llm:select', async (_e, provider, model) => {
+    // saveSelection 是异步持久化：必须等待提交完成再回读状态，
+    // 否则 UI 第一次点击读到旧选择，表现为「要点两次」。
+    await engine().agentDefaultModel.saveSelection({ provider, model })
     return llmState()
   })
+  ipcMain.handle('llm:discover', (_e, providerId) => llmDiscover(providerId))
   ipcMain.handle('credentials:has', async (_e, ref) => {
     const hit = await engine().credentials.resolve(ref)
     return hit !== undefined
@@ -344,7 +425,7 @@ async function runSmoke() {
     ok('sessionListed', list.some((s) => s.id === sid), list.length)
 
     // 模型目录 + 默认模型选择
-    const st = llmState()
+    const st = await llmState()
     ok('llmProvidersListed', st.providers.length >= 1, st.providers.map((p) => p.id))
     ok(
       'llmModelsCatalogued',
@@ -354,7 +435,7 @@ async function runSmoke() {
     const first = st.providers.find((p) => p.models.length > 0)
     if (first) {
       await engine().agentDefaultModel.saveSelection({ provider: first.id, model: first.models[0].id })
-      const cur = llmState().current
+      const cur = (await llmState()).current
       ok('llmSelectionSaved', cur.provider === first.id && cur.model === first.models[0].id, cur)
     }
 
@@ -364,6 +445,14 @@ async function runSmoke() {
     ok('credentialStored', (await engine().credentials.resolve(credRef)) !== undefined)
     await engine().credentials.unset(credRef)
     ok('credentialCleared', (await engine().credentials.resolve(credRef)) === undefined)
+
+    // 模型发现（测速并获取模型列表：内置目录即时返回 + 简要信息）
+    const disc = await llmDiscover('deepseek-official')
+    ok(
+      'llmDiscoverWorks',
+      disc.ok === true && disc.models.length >= 1 && disc.elapsedMs >= 0 && disc.models.every((m) => typeof m.name === 'string'),
+      { models: disc.models.map((m) => ({ id: m.id, ctx: m.contextWindow, max: m.maxTokens })), elapsedMs: disc.elapsedMs },
+    )
 
     // 渲染层加载
     await sleep(3000)
@@ -376,7 +465,7 @@ async function runSmoke() {
     })`).catch((e) => ({ error: String(e) }))
     ok('auroraUiRendered', dom.input === true && dom.sidebar === true, dom)
 
-    // UI 交互：打开设置 → 面板/密钥框/模型选项就位 → 关闭
+    // UI 交互：打开设置 → 面板/密钥框/模型选项就位 → 单击切换模型（一次点击必须生效）
     const uiFlow = await win.webContents
       .executeJavaScript(`(async () => {
         const out = {}
@@ -387,24 +476,50 @@ async function runSmoke() {
         out.apiKeyInput = !!document.querySelector('[data-api-key]')
         out.modelOptions = document.querySelectorAll('[data-model-option]').length
         out.dshHomeInput = !!document.querySelector('[data-dsh-home]')
+        out.discoverBtns = document.querySelectorAll('[data-discover]').length
+        // 单击第二个模型选项（一次点击）——回归「需要点两次」的 bug
+        const chips = Array.from(document.querySelectorAll('[data-model-option]'))
+        if (chips.length >= 2) {
+          chips[1].click()
+          await new Promise((r) => setTimeout(r, 1500))
+          const active = Array.from(document.querySelectorAll('[data-model-option]'))
+            .filter((c) => c.className.includes('bg-apple-blue'))
+            .map((c) => c.textContent || '')
+          out.activeAfterOneClick = active
+        } else {
+          out.activeAfterOneClick = null
+        }
         // 关闭（点遮罩）
         const backdrop = document.querySelector('[data-settings]')
         backdrop?.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
         await new Promise((r) => setTimeout(r, 300))
         out.settingsClosed = !document.querySelector('[data-settings]')
+        // 模型菜单过滤：无密钥时应显示空态提示
+        document.querySelector('[data-model-pill]')?.click()
+        await new Promise((r) => setTimeout(r, 300))
+        const menuText = (document.querySelector('.relative')?.textContent || '')
+        out.menuEmptyHint = menuText.includes('暂无已配置密钥')
         return out
       })()`)
       .catch((e) => ({ error: String(e) }))
+    const singleClickOk =
+      Array.isArray(uiFlow.activeAfterOneClick) &&
+      uiFlow.activeAfterOneClick.length === 1 &&
+      /Pro/.test(uiFlow.activeAfterOneClick[0] ?? '')
     ok(
       'settingsUiWorks',
       uiFlow.settingsOpen === true &&
         uiFlow.apiKeyInput === true &&
-        uiFlow.modelOptions >= 1 &&
+        uiFlow.modelOptions >= 2 &&
         uiFlow.dshHomeInput === true &&
+        uiFlow.discoverBtns >= 1 &&
         uiFlow.settingsClosed === true &&
-        uiFlow.modelPill === true,
+        uiFlow.modelPill === true &&
+        singleClickOk === true,
       uiFlow,
     )
+    ok('singleClickSwitchesModel', singleClickOk, uiFlow.activeAfterOneClick)
+    ok('modelMenuFiltersByKey', uiFlow.menuEmptyHint === true, { menuEmptyHint: uiFlow.menuEmptyHint })
 
     const img = await win.webContents.capturePage()
     const shot = join(app.getPath('userData'), 'smoke-screenshot.png')

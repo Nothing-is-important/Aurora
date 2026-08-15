@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
-import { X, KeyRound, Check, Loader2, FolderOpen, Cpu } from 'lucide-react'
-import type { LlmState } from '../types'
+import { X, KeyRound, Check, Loader2, FolderOpen, Cpu, Gauge } from 'lucide-react'
+import type { LlmState, LlmProviderInfo } from '../types'
 
 interface Props {
   open: boolean
@@ -8,19 +8,14 @@ interface Props {
   onEngineRestarted: () => void
 }
 
-/** 每个提供商的 API Key 环境引用（命名空间 apiKeyEnv 字段，credentials 按它存取） */
-const API_KEY_ENV: Record<string, string> = {
-  deepseek: 'DEEPSEEK_API_KEY',
-  'deepseek-official': 'DEEPSEEK_API_KEY',
-}
-
 export default function SettingsModal({ open, onClose, onEngineRestarted }: Props) {
   const [llm, setLlm] = useState<LlmState | null>(null)
   const [dshHome, setDshHome] = useState('')
   const [keyDraft, setKeyDraft] = useState<Record<string, string>>({})
-  const [keySaved, setKeySaved] = useState<Record<string, boolean>>({})
-  const [keyBusy, setKeyBusy] = useState(false)
+  const [keyBusy, setKeyBusy] = useState<string | null>(null)
   const [modelBusy, setModelBusy] = useState<string | null>(null)
+  const [discovering, setDiscovering] = useState<string | null>(null)
+  const [discoverMsg, setDiscoverMsg] = useState<Record<string, string>>({})
   const [homeBusy, setHomeBusy] = useState(false)
   const [homeMsg, setHomeMsg] = useState('')
 
@@ -36,48 +31,74 @@ export default function SettingsModal({ open, onClose, onEngineRestarted }: Prop
     if (!open) return
     void refresh()
     void window.aurora.appSettings.get().then((s) => setDshHome(s.dshHome ?? ''))
-    // 密钥存在性
-    void (async () => {
-      const present: Record<string, boolean> = {}
-      for (const ref of Object.values(API_KEY_ENV)) {
-        present[ref] = await window.aurora.credentials.has(ref)
-      }
-      setKeySaved(present)
-    })()
   }, [open])
 
   if (!open) return null
 
-  const saveKey = async (ref: string) => {
+  const saveKey = async (p: LlmProviderInfo) => {
+    const ref = p.apiKeyEnv
+    if (!ref) return
     const value = (keyDraft[ref] ?? '').trim()
     if (!value) return
-    setKeyBusy(true)
+    setKeyBusy(ref)
     try {
       await window.aurora.credentials.set(ref, value)
-      setKeySaved((p) => ({ ...p, [ref]: true }))
-      setKeyDraft((p) => ({ ...p, [ref]: '' }))
+      setKeyDraft((d) => ({ ...d, [ref]: '' }))
+      await refresh()
     } finally {
-      setKeyBusy(false)
+      setKeyBusy(null)
     }
   }
 
-  const clearKey = async (ref: string) => {
-    setKeyBusy(true)
+  const clearKey = async (p: LlmProviderInfo) => {
+    const ref = p.apiKeyEnv
+    if (!ref) return
+    setKeyBusy(ref)
     try {
       await window.aurora.credentials.unset(ref)
-      setKeySaved((p) => ({ ...p, [ref]: false }))
+      await refresh()
     } finally {
-      setKeyBusy(false)
+      setKeyBusy(null)
     }
   }
 
   const selectModel = async (provider: string, model: string) => {
     setModelBusy(`${provider}::${model}`)
     try {
-      const next = await window.aurora.llm.select(provider, model)
-      setLlm(next)
+      setLlm(await window.aurora.llm.select(provider, model))
     } finally {
       setModelBusy(null)
+    }
+  }
+
+  const discover = async (p: LlmProviderInfo) => {
+    setDiscovering(p.id)
+    setDiscoverMsg((m) => ({ ...m, [p.id]: '' }))
+    try {
+      const r = await window.aurora.llm.discover(p.id)
+      if (r.ok) {
+        setLlm((prev) =>
+          prev
+            ? {
+                ...prev,
+                providers: prev.providers.map((x) =>
+                  x.id === p.id ? { ...x, models: r.models } : x,
+                ),
+              }
+            : prev,
+        )
+        setDiscoverMsg((m) => ({
+          ...m,
+          [p.id]:
+            r.models.length > 0
+              ? `已获取 ${r.models.length} 个模型（${r.elapsedMs}ms，来源：${r.source === 'endpoint' ? '端点' : '内置目录'}）`
+              : `未发现模型（${r.elapsedMs}ms）`,
+        }))
+      } else {
+        setDiscoverMsg((m) => ({ ...m, [p.id]: `获取失败：${r.error}` }))
+      }
+    } finally {
+      setDiscovering(null)
     }
   }
 
@@ -111,7 +132,7 @@ export default function SettingsModal({ open, onClose, onEngineRestarted }: Prop
         if (e.target === e.currentTarget) onClose()
       }}
     >
-      <div className="glass-strong flex h-[520px] w-[680px] flex-col overflow-hidden rounded-3xl shadow-glass">
+      <div className="glass-strong flex h-[540px] w-[700px] flex-col overflow-hidden rounded-3xl shadow-glass">
         <div className="flex items-center justify-between border-b border-black/[0.06] px-5 py-3.5 dark:border-white/[0.08]">
           <h2 className="text-[15px] font-semibold text-black/85 dark:text-white/90">设置</h2>
           <button
@@ -124,20 +145,23 @@ export default function SettingsModal({ open, onClose, onEngineRestarted }: Prop
         </div>
 
         <div className="min-h-0 flex-1 space-y-6 overflow-y-auto px-5 py-4">
-          {/* 模型 */}
+          {/* 模型供应商 */}
           <section>
             <h3 className="mb-2 flex items-center gap-1.5 text-[12.5px] font-semibold text-black/70 dark:text-white/70">
-              <Cpu size={13} strokeWidth={2.2} /> 模型
+              <Cpu size={13} strokeWidth={2.2} /> 模型供应商
             </h3>
             {!llm ? (
               <p className="text-[12px] text-black/40 dark:text-white/40">正在读取引擎模型目录…</p>
             ) : (
               <div className="space-y-3">
                 {llm.providers.map((p) => {
-                  const ref = API_KEY_ENV[p.id]
+                  const ref = p.apiKeyEnv
+                  const keyValue = keyDraft[ref ?? ''] ?? ''
+                  const busy = keyBusy === ref
                   return (
                     <div
                       key={p.id}
+                      data-provider-card
                       className="rounded-xl border border-black/[0.06] p-3 dark:border-white/[0.08]"
                     >
                       <div className="flex items-center justify-between">
@@ -147,24 +171,17 @@ export default function SettingsModal({ open, onClose, onEngineRestarted }: Prop
                           </span>
                           <span
                             className={`rounded px-1.5 py-px text-[9.5px] ${
-                              p.live
+                              p.hasKey
                                 ? 'bg-apple-green/15 text-apple-green'
-                                : 'bg-black/[0.05] text-black/40 dark:bg-white/[0.08] dark:text-white/40'
+                                : 'bg-apple-orange/15 text-apple-orange'
                             }`}
                           >
-                            {p.live ? '已激活' : '未激活'}
+                            {p.hasKey ? '密钥已配置' : '未配置密钥'}
                           </span>
                         </div>
-                        {keySaved[ref] ? (
-                          <span className="flex items-center gap-1 text-[11px] text-apple-green">
-                            <Check size={12} /> 密钥已保存
-                          </span>
-                        ) : (
-                          <span className="text-[11px] text-apple-orange">未配置密钥</span>
-                        )}
                       </div>
 
-                      {ref && (
+                      {ref ? (
                         <div className="mt-2.5 flex items-center gap-2">
                           <div className="relative flex-1">
                             <KeyRound
@@ -176,9 +193,9 @@ export default function SettingsModal({ open, onClose, onEngineRestarted }: Prop
                               type="password"
                               className={`${field} pl-7`}
                               placeholder={
-                                keySaved[ref] ? '已保存（输入新值可覆盖）' : 'API Key，如 sk-…'
+                                p.hasKey ? '已保存（输入新值可覆盖）' : 'API Key，如 sk-…'
                               }
-                              value={keyDraft[ref] ?? ''}
+                              value={keyValue}
                               onChange={(e) =>
                                 setKeyDraft((d) => ({ ...d, [ref]: e.target.value }))
                               }
@@ -186,23 +203,46 @@ export default function SettingsModal({ open, onClose, onEngineRestarted }: Prop
                           </div>
                           <button
                             data-key-save
-                            disabled={keyBusy || !(keyDraft[ref] ?? '').trim()}
-                            onClick={() => void saveKey(ref)}
+                            disabled={busy || !keyValue.trim()}
+                            onClick={() => void saveKey(p)}
                             className="h-8 shrink-0 rounded-lg bg-apple-blue px-3 text-[12px] font-medium text-white transition-all hover:brightness-110 active:scale-95 disabled:opacity-40"
                           >
                             保存
                           </button>
-                          {keySaved[ref] && (
+                          {p.hasKey && (
                             <button
                               data-key-clear
-                              disabled={keyBusy}
-                              onClick={() => void clearKey(ref)}
+                              disabled={busy}
+                              onClick={() => void clearKey(p)}
                               className="h-8 shrink-0 rounded-lg bg-black/[0.05] px-3 text-[12px] font-medium text-black/60 transition-colors hover:bg-apple-red/10 hover:text-apple-red dark:bg-white/[0.07] dark:text-white/60"
                             >
                               清除
                             </button>
                           )}
+                          <button
+                            data-discover
+                            disabled={discovering === p.id}
+                            onClick={() => void discover(p)}
+                            className="flex h-8 shrink-0 items-center gap-1 rounded-lg bg-black/[0.05] px-3 text-[12px] font-medium text-black/60 transition-colors hover:bg-black/[0.09] dark:bg-white/[0.07] dark:text-white/60 dark:hover:bg-white/[0.12]"
+                          >
+                            {discovering === p.id ? (
+                              <Loader2 size={12} className="animate-spin" />
+                            ) : (
+                              <Gauge size={12} />
+                            )}
+                            测速并获取模型
+                          </button>
                         </div>
+                      ) : (
+                        <p className="mt-2 text-[11px] text-black/35 dark:text-white/35">
+                          该提供商通过环境变量注入密钥（{p.id}）。
+                        </p>
+                      )}
+
+                      {discoverMsg[p.id] && (
+                        <p className="mt-1.5 text-[11px] text-black/50 dark:text-white/50">
+                          {discoverMsg[p.id]}
+                        </p>
                       )}
 
                       {p.models.length > 0 && (
@@ -210,11 +250,12 @@ export default function SettingsModal({ open, onClose, onEngineRestarted }: Prop
                           {p.models.map((m) => {
                             const active =
                               llm.current.provider === p.id && llm.current.model === m.id
-                            const busy = modelBusy === `${p.id}::${m.id}`
+                            const busySel = modelBusy === `${p.id}::${m.id}`
                             return (
                               <button
                                 key={m.id}
                                 data-model-option
+                                title={m.description ?? m.id}
                                 onClick={() => void selectModel(p.id, m.id)}
                                 className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[11.5px] transition-all ${
                                   active
@@ -222,11 +263,12 @@ export default function SettingsModal({ open, onClose, onEngineRestarted }: Prop
                                     : 'bg-black/[0.05] text-black/60 hover:bg-black/[0.09] dark:bg-white/[0.07] dark:text-white/60 dark:hover:bg-white/[0.12]'
                                 }`}
                               >
-                                {busy && <Loader2 size={11} className="animate-spin" />}
+                                {busySel && <Loader2 size={11} className="animate-spin" />}
                                 {m.name}
                                 {m.contextWindow
-                                  ? ` · ${Math.round(m.contextWindow / 1024)}K`
+                                  ? ` · ${Math.round(m.contextWindow / 1024)}K 上下文`
                                   : ''}
+                                {m.maxTokens ? ` · 上限 ${m.maxTokens}` : ''}
                               </button>
                             )
                           })}
@@ -265,9 +307,7 @@ export default function SettingsModal({ open, onClose, onEngineRestarted }: Prop
                 {homeBusy ? <Loader2 size={13} className="animate-spin" /> : '应用'}
               </button>
             </div>
-            {homeMsg && (
-              <p className="mt-1.5 text-[11px] text-apple-green">{homeMsg}</p>
-            )}
+            {homeMsg && <p className="mt-1.5 text-[11px] text-apple-green">{homeMsg}</p>}
           </section>
         </div>
       </div>

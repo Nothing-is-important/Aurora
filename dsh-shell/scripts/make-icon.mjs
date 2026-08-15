@@ -14,7 +14,7 @@ const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512">
       <stop offset="1" stop-color="#5e5ce6"/>
     </linearGradient>
   </defs>
-  <rect width="512" height="512" rx="112" fill="url(#g)"/>
+  <rect width="512" height="512" fill="url(#g)"/>
   <text x="256" y="330" font-family="Segoe UI, Arial, sans-serif" font-size="190" font-weight="700"
         fill="#ffffff" text-anchor="middle">DSH</text>
 </svg>`
