@@ -8,12 +8,20 @@ import type { SearchRef } from './tools'
 let db: Database | null = null
 let dbFile = ''
 
-export async function initKbDb(): Promise<void> {
+export async function initKbDb(opts?: {
+  file?: string
+  fresh?: boolean
+  smoke?: boolean
+}): Promise<void> {
   const SQL = await initSqlJs({
     locateFile: (f: string) =>
       path.join(path.dirname(require.resolve('sql.js/dist/sql-wasm.wasm')), f),
   })
-  dbFile = path.join(app.getPath('userData'), 'kb.sqlite')
+  dbFile = path.join(
+    app.getPath('userData'),
+    opts?.file ?? (opts?.smoke ? 'kb-smoke.sqlite' : 'kb.sqlite'),
+  )
+  if (opts?.fresh && fs.existsSync(dbFile)) fs.unlinkSync(dbFile)
   if (fs.existsSync(dbFile)) {
     try {
       db = new SQL.Database(fs.readFileSync(dbFile))
@@ -34,6 +42,17 @@ export async function initKbDb(): Promise<void> {
       content TEXT NOT NULL, mtime INTEGER NOT NULL
     );
   `)
+  // 正式模式清理历史冒烟污染（kb-smoke 目录为冒烟专用）
+  if (!opts?.smoke) {
+    const smokeDir = path.join(app.getPath('userData'), 'kb-smoke')
+    const res = db.exec('SELECT id FROM kb WHERE path = ?', [smokeDir])
+    for (const row of res.length ? res[0].values : []) {
+      const id = String(row[0])
+      db.run('DELETE FROM kb_documents WHERE kb_id = ?', [id])
+      db.run('DELETE FROM kb WHERE id = ?', [id])
+    }
+    if (res.length) saveDb()
+  }
 }
 
 function saveDb(): void {
@@ -148,8 +167,8 @@ class KbManager {
   private index = new Bm25Index()
   private docs = new Map<string, KbDoc>()
 
-  async init(): Promise<void> {
-    await initKbDb()
+  async init(opts?: { file?: string; fresh?: boolean; smoke?: boolean }): Promise<void> {
+    await initKbDb(opts)
     this.reloadIndex()
   }
 
@@ -239,6 +258,12 @@ class KbManager {
   async addFolder(folderPath: string): Promise<KbRow> {
     if (!db) throw new Error('KB 未初始化')
     const abs = path.resolve(folderPath)
+    // 去重：同一路径已存在则重建该条目（避免重复添加产生多条记录）
+    const existing = this.list().find((k) => path.resolve(k.path) === abs)
+    if (existing) {
+      const rebuilt = await this.rebuild(existing.id)
+      if (rebuilt) return rebuilt
+    }
     const name = path.basename(abs) || abs
     const id = 'kb-' + Date.now().toString(36)
     db.run(

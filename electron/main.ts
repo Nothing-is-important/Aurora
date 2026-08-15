@@ -1614,7 +1614,7 @@ app.whenReady().then(async () => {
     bootLog('initDb failed: ' + String(err))
     throw err
   }
-  await kbManager.init()
+  await kbManager.init({ smoke: SMOKE, fresh: SMOKE })
   bootLog('kb init ok')
   await pluginManager.init()
   bootLog('plugins init ok')
