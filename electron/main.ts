@@ -1051,7 +1051,7 @@ async function runSmoke(w: BrowserWindow, errors: string[]): Promise<void> {
   )
     failures.push('设置表单字段缺失')
   if (dom.openDataDirBtn !== true) failures.push('打开数据目录按钮缺失')
-  if (!String(dom.appVersion).startsWith('v0.2'))
+  if (!String(dom.appVersion).startsWith('v0.3'))
     failures.push(`版本号显示异常: ${dom.appVersion}`)
   // 添加模型草稿断言
   if (dom.draftBadge !== true) failures.push('「未保存」徽标未出现')
@@ -1214,9 +1214,11 @@ async function runSmoke(w: BrowserWindow, errors: string[]): Promise<void> {
   console.log('[SMOKE] report: ' + JSON.stringify(report, null, 2))
   if (failures.length > 0) {
     console.error('[SMOKE] FAIL:\n  - ' + failures.join('\n  - '))
+    bootLog('SMOKE FAIL: ' + failures.join(' | '))
     app.exit(1)
   } else {
     console.log('[SMOKE] OK')
+    bootLog('SMOKE OK')
     app.exit(0)
   }
 }
