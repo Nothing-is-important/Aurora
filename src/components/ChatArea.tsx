@@ -730,9 +730,11 @@ export default function ChatArea({ chat, settingsOpen, onSmokePhase2Done }: Chat
               className="glass-strong animate-scaleIn absolute bottom-[calc(100%+10px)] left-0 z-30 max-h-[320px] w-[340px] origin-bottom overflow-y-auto rounded-2xl p-1.5 shadow-glass"
             >
               <p className="px-3 pb-1 pt-1.5 text-[10.5px] font-semibold uppercase tracking-wider text-black/35 dark:text-white/30">
-                提示词模板
+                提示词模板 · {activeMode?.name ?? '标准模式'}
               </p>
-              {[...BUILTIN_TEMPLATES, ...customTemplates].map((t) => (
+              {[...BUILTIN_TEMPLATES, ...customTemplates]
+                .filter((t) => !t.modes || t.modes.includes(modeId))
+                .map((t) => (
                 <button
                   key={t.id}
                   data-template-item
@@ -754,6 +756,13 @@ export default function ChatArea({ chat, settingsOpen, onSmokePhase2Done }: Chat
                   </span>
                 </button>
               ))}
+              {[...BUILTIN_TEMPLATES, ...customTemplates].filter(
+                (t) => !t.modes || t.modes.includes(modeId),
+              ).length === 0 && (
+                <p className="px-3 py-5 text-center text-[12px] text-black/40 dark:text-white/40">
+                  当前模式没有可用模板
+                </p>
+              )}
             </div>
           )}
 

@@ -4,46 +4,50 @@ export interface ChatMode {
   desc: string
   systemPrompt: string
   toolsEnabled: boolean
+  /** 工具白名单：未定义 = 全部工具；定义后仅允许列出的工具 */
+  allowedTools?: string[]
   recommendModelId?: string
   builtin?: boolean
 }
 
+/** 与 DeepSeek Harness（DSH）四个 Agent 预设对齐 */
 export const BUILTIN_MODES: ChatMode[] = [
   {
-    id: 'chat',
-    name: '普通对话',
-    desc: '快速问答，不调用工具',
+    id: 'standard',
+    name: '标准模式',
+    desc: '全功能 Agent：文件编辑、Shell、文件与网页检索、知识库、MCP 与工作流。',
     systemPrompt: '',
-    toolsEnabled: false,
+    toolsEnabled: true,
     builtin: true,
   },
   {
-    id: 'coder',
-    name: '编程助手',
-    desc: '写代码、审查、解释，可用文件与代码执行',
+    id: 'ptc',
+    name: 'PTC 模式',
+    desc: '标准模式全部能力 + 程序化多步操作（对应 DSH 的 Code Mode SDK）。',
     systemPrompt:
-      '你是一位资深软件工程师。回答代码问题时优先给出可直接运行的完整示例，标注版本兼容性，指出性能与安全注意事项。涉及文件操作时使用提供的工具，回答简洁、代码优先。',
+      '你是一位精通程序化任务编排的工程师。面对多步操作时，优先将步骤组合为清晰、可复用、可校验的程序化方案，善用文件与代码执行工具，输出结构严谨、可直接运行的结果。',
     toolsEnabled: true,
     recommendModelId: 'deepseek-chat',
     builtin: true,
   },
   {
-    id: 'writer',
-    name: '写作助手',
-    desc: '润色、翻译、公文与文案',
+    id: 'minimal',
+    name: '极简模式',
+    desc: '仅 Shell 与文件编辑的双工具编码 Agent。',
     systemPrompt:
-      '你是一位专业的中文写作顾问。润色文字时保持原意与语气，让表达更流畅、专业；翻译时兼顾信达雅；撰写文案时结构清晰、重点突出。修改后简要说明关键改动。',
-    toolsEnabled: false,
+      '你是一个极简编码 Agent，只使用 Shell 与文件编辑工具完成任务。回答直接、克制、不展开无关内容。',
+    toolsEnabled: true,
+    allowedTools: ['run_shell', 'read_file', 'write_file', 'list_dir'],
     recommendModelId: 'deepseek-chat',
     builtin: true,
   },
   {
-    id: 'agent',
-    name: 'Agent 完整模式',
-    desc: '全部工具：文件/代码/命令/搜索/知识库/MCP',
-    systemPrompt: '',
+    id: 'creator',
+    name: '创造模式',
+    desc: '创建自定义模式：标准模式全部能力 + 模式创作指导。',
+    systemPrompt:
+      '你是一位 Agent 预设创作顾问。帮助用户设计自定义模式：明确模式的目标场景、系统提示词、需要的工具组合与推荐模型，并给出可直接使用的配置建议。',
     toolsEnabled: true,
-    recommendModelId: 'deepseek-chat',
     builtin: true,
   },
 ]
@@ -66,7 +70,7 @@ export async function saveCustomModes(list: ChatMode[]): Promise<void> {
 }
 
 export async function loadActiveModeId(): Promise<string> {
-  return (await window.aurora.settings.get('activeModeId')) ?? 'chat'
+  return (await window.aurora.settings.get('activeModeId')) ?? 'standard'
 }
 
 export async function saveActiveModeId(id: string): Promise<void> {

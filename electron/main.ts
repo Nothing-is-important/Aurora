@@ -550,16 +550,16 @@ const DOM_AUDIT = `
     (document.querySelector('[data-model-pill]') || {}).textContent || ''
   )
 
-  // 模式切换：打开菜单 → 切换到编程助手 → 断言 pill 变化 → 切回
+  // 模式切换：打开菜单 → 切换到 PTC 模式 → 断言 pill 变化 → 切回标准模式
   const modePill = document.querySelector('[data-mode-pill]')
   if (modePill) modePill.click()
   await sleep(300)
   out.modeMenuOpen = !!document.querySelector('[data-mode-menu]')
   out.modeItems = document.querySelectorAll('[data-mode-item]').length
-  const coderMode = Array.from(document.querySelectorAll('[data-mode-item]')).find(
-    (b) => (b.textContent || '').includes('编程助手')
+  const ptcMode = Array.from(document.querySelectorAll('[data-mode-item]')).find(
+    (b) => (b.textContent || '').includes('PTC 模式')
   )
-  if (coderMode) coderMode.click()
+  if (ptcMode) ptcMode.click()
   await sleep(300)
   out.modePillAfter = (
     (document.querySelector('[data-mode-pill]') || {}).textContent || ''
@@ -567,10 +567,10 @@ const DOM_AUDIT = `
   const modePill2 = document.querySelector('[data-mode-pill]')
   if (modePill2) modePill2.click()
   await sleep(300)
-  const agentMode = Array.from(document.querySelectorAll('[data-mode-item]')).find(
-    (b) => (b.textContent || '').includes('Agent 完整模式')
+  const standardMode = Array.from(document.querySelectorAll('[data-mode-item]')).find(
+    (b) => (b.textContent || '').includes('标准模式')
   )
-  if (agentMode) agentMode.click()
+  if (standardMode) standardMode.click()
   await sleep(300)
   out.modePillRestored = (
     (document.querySelector('[data-mode-pill]') || {}).textContent || ''
@@ -999,7 +999,7 @@ async function runSmoke(w: BrowserWindow, errors: string[]): Promise<void> {
   )
     failures.push('设置表单字段缺失')
   if (dom.openDataDirBtn !== true) failures.push('打开数据目录按钮缺失')
-  if (!String(dom.appVersion).startsWith('v0.1'))
+  if (!String(dom.appVersion).startsWith('v0.2'))
     failures.push(`版本号显示异常: ${dom.appVersion}`)
   // 添加模型草稿断言
   if (dom.draftBadge !== true) failures.push('「未保存」徽标未出现')
@@ -1043,9 +1043,9 @@ async function runSmoke(w: BrowserWindow, errors: string[]): Promise<void> {
   // 模式切换断言
   if (dom.modeMenuOpen !== true) failures.push('模式菜单未打开')
   if (dom.modeItems < 4) failures.push(`模式条目过少: ${dom.modeItems}`)
-  if (!String(dom.modePillAfter).includes('编程助手'))
+  if (!String(dom.modePillAfter).includes('PTC'))
     failures.push(`模式切换未生效: ${dom.modePillAfter}`)
-  if (!String(dom.modePillRestored).includes('Agent'))
+  if (!String(dom.modePillRestored).includes('标准模式'))
     failures.push(`模式切回失败: ${dom.modePillRestored}`)
   // Token 统计断言
   const usageMeta = String(dom.usageMeta)

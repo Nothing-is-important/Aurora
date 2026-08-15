@@ -68,7 +68,7 @@ export function useChat(opts: UseChatOptions): ChatController {
   const [models, setModels] = useState<ModelConfig[]>([])
   const [modelId, setModelIdState] = useState('')
   const [modes, setModes] = useState<ChatMode[]>(BUILTIN_MODES)
-  const [modeId, setModeIdState] = useState('chat')
+  const [modeId, setModeIdState] = useState('standard')
   const [streamingId, setStreamingId] = useState<string | null>(null)
   const streamingRef = useRef<string | null>(null)
   const modeIdRef = useRef('chat')
@@ -404,6 +404,7 @@ export function useChat(opts: UseChatOptions): ChatController {
           modelId: mid,
           messages: apiMessages,
           toolsEnabled: mode?.toolsEnabled !== false,
+          allowedTools: mode?.allowedTools,
         })
       })()
     },

@@ -17,6 +17,8 @@ export interface ChatStartRequest {
   requestId: string
   modelId: string
   messages: { role: string; content: string }[]
+  toolsEnabled?: boolean
+  allowedTools?: string[]
 }
 
 export interface ChatUsage {

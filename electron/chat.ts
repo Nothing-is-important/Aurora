@@ -17,6 +17,7 @@ export interface ChatStartRequest {
   modelId: string
   messages: { role: string; content: unknown }[]
   toolsEnabled?: boolean
+  allowedTools?: string[]
 }
 
 export interface ChatUsage {
@@ -127,10 +128,17 @@ async function runChat(
         role: m.role,
         content: m.content as string | unknown[] | null,
       }))
+      const allTools = [...TOOL_DEFS, ...mcpManager.getToolDefs()]
       const tools =
         req.toolsEnabled === false
           ? []
-          : [...TOOL_DEFS, ...mcpManager.getToolDefs()]
+          : req.allowedTools && req.allowedTools.length > 0
+            ? allTools.filter((t) => {
+                const name = (t as { function?: { name?: string } })?.function
+                  ?.name
+                return name ? req.allowedTools!.includes(name) : false
+              })
+            : allTools
       for (let round = 0; round < MAX_ROUNDS; round++) {
         const outcome =
           model.provider === 'mock'

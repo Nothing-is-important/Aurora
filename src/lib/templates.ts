@@ -4,6 +4,8 @@ export interface PromptTemplate {
   desc: string
   kind: 'system' | 'chat'
   prompt: string
+  /** 适用模式 id 列表：未定义 = 所有模式可见；定义后仅这些模式显示 */
+  modes?: string[]
 }
 
 export const BUILTIN_TEMPLATES: PromptTemplate[] = [
@@ -13,6 +15,7 @@ export const BUILTIN_TEMPLATES: PromptTemplate[] = [
     desc: '翻译成中文，保持语气',
     kind: 'chat',
     prompt: '请将以下内容翻译成中文，保持原意与语气：\n\n',
+    modes: ['standard'],
   },
   {
     id: 'code-review',
@@ -21,6 +24,7 @@ export const BUILTIN_TEMPLATES: PromptTemplate[] = [
     kind: 'chat',
     prompt:
       '请审查以下代码，指出潜在 bug、性能问题、安全隐患与改进建议，并给出修改后的关键代码：\n\n',
+    modes: ['standard', 'ptc'],
   },
   {
     id: 'polish',
@@ -28,6 +32,7 @@ export const BUILTIN_TEMPLATES: PromptTemplate[] = [
     desc: '让文字更流畅专业',
     kind: 'chat',
     prompt: '请润色以下文字，使其更流畅、专业，并简要说明主要修改：\n\n',
+    modes: ['standard'],
   },
   {
     id: 'weekly-report',
@@ -36,6 +41,7 @@ export const BUILTIN_TEMPLATES: PromptTemplate[] = [
     kind: 'chat',
     prompt:
       '请根据以下工作要点生成一份结构化周报，包含：本周完成、数据亮点、问题与风险、下周计划：\n\n',
+    modes: ['standard'],
   },
   {
     id: 'brainstorm',
@@ -44,6 +50,7 @@ export const BUILTIN_TEMPLATES: PromptTemplate[] = [
     kind: 'system',
     prompt:
       '你是一位富有创造力的头脑风暴顾问。面对用户的每个想法，先给出 3 个不同角度的拓展思路，再指出最大风险与反直觉的替代方案，最后用一句话总结最值得尝试的方向。保持热情但克制，避免空话。',
+    modes: ['standard'],
   },
   {
     id: 'python-expert',
@@ -52,6 +59,7 @@ export const BUILTIN_TEMPLATES: PromptTemplate[] = [
     kind: 'system',
     prompt:
       '你是一位资深 Python 工程师。回答代码问题时优先给出可直接运行的完整示例，标注 Python 版本兼容性，指出性能与类型安全注意事项。回答简洁，代码优先。',
+    modes: ['standard', 'ptc'],
   },
 ]
 
