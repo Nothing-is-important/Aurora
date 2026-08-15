@@ -25,7 +25,6 @@ import { defaultParamsFor, maxTokensFor } from '../lib/params'
 
 interface SettingsModalProps {
   open: boolean
-  models: ModelConfig[]
   onClose: () => void
   onChanged: () => void
   onModesChanged?: () => void
@@ -46,30 +45,41 @@ const PROVIDERS: { id: string; label: string; defaultBaseUrl: string }[] = [
   { id: 'mock', label: '本地 Mock（演示）', defaultBaseUrl: '' },
 ]
 
-function emptyModel(): ModelConfig {
+function emptyProvider(): {
+  id: string
+  name: string
+  kind: string
+  baseUrl: string
+  apiKey: string
+  enabled: boolean
+} {
   return {
-    id: `custom-${Date.now().toString(36)}`,
-    name: '新模型',
-    provider: 'openai',
+    id: `prov-${Date.now().toString(36)}`,
+    name: '新提供商',
+    kind: 'openai',
     baseUrl: 'https://api.openai.com/v1',
     apiKey: '',
-    modelId: '',
-    temperature: 1,
-    maxTokens: 4096,
-    topP: 1,
     enabled: true,
   }
 }
 
 export default function SettingsModal({
   open,
-  models,
   onClose,
   onChanged,
   onModesChanged,
 }: SettingsModalProps) {
-  const [selectedId, setSelectedId] = useState('')
-  const [form, setForm] = useState<ModelConfig>(emptyModel())
+  const [providers, setProviders] = useState<ProviderRow[]>([])
+  const [selectedProviderId, setSelectedProviderId] = useState('')
+  const [form, setForm] = useState<{
+    id: string
+    name: string
+    kind: string
+    baseUrl: string
+    apiKey: string
+    enabled: boolean
+  }>(emptyProvider())
+  const [providerModels, setProviderModels] = useState<ModelConfig[]>([])
   const [showKey, setShowKey] = useState(false)
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState<{
@@ -79,8 +89,20 @@ export default function SettingsModal({
     modelIds?: { id: string; contextLength?: number }[]
   } | null>(null)
   const [saving, setSaving] = useState(false)
-  /** 未保存的新模型草稿（点击 + 后立即出现在左侧列表，带「未保存」徽标） */
-  const [draftModel, setDraftModel] = useState<ModelConfig | null>(null)
+  /** 未保存的新提供商草稿（点击 + 后立即出现在左侧列表，带「未保存」徽标） */
+  const [draftProvider, setDraftProvider] = useState<{
+    id: string
+    name: string
+    kind: string
+    baseUrl: string
+    apiKey: string
+    enabled: boolean
+  } | null>(null)
+  /** 手动添加模型表单 */
+  const [modelAddOpen, setModelAddOpen] = useState(false)
+  const [modelAddId, setModelAddId] = useState('')
+  /** 模型参数是否被用户手动修改过 */
+  const [paramsDirty, setParamsDirty] = useState(false)
   const [sysPrompt, setSysPrompt] = useState('')
   const [sysSaved, setSysSaved] = useState(false)
   const [whitelistText, setWhitelistText] = useState('')
@@ -102,8 +124,6 @@ export default function SettingsModal({
     isNew: boolean
   } | null>(null)
   const [pluginMsg, setPluginMsg] = useState<string | null>(null)
-  /** 参数是否被用户手动修改过（未修改时模型 ID 变化会自动套用推荐默认值） */
-  const [paramsDirty, setParamsDirty] = useState(false)
 
   const PLUGIN_TEMPLATE = `// Aurora 插件：返回 { meta, setup(api) }
 const meta = {
@@ -238,8 +258,29 @@ return { meta, setup }
       loadKb()
       void reloadCustomModes()
       void loadPlugins()
+      void reloadProviders()
     }
   }, [open])
+
+  /** 手动添加模型到当前提供商（参数自动适配） */
+  const confirmAddModel = async (): Promise<void> => {
+    const mid = modelAddId.trim()
+    if (!mid) return
+    const params = defaultParamsFor(mid)
+    await window.aurora.models.save({
+      id: `${form.id}::${mid}`,
+      providerId: form.id,
+      name: mid,
+      modelId: mid,
+      enabled: true,
+      ...params,
+      maxTokens: maxTokensFor(mid),
+    })
+    setModelAddId('')
+    setModelAddOpen(false)
+    onChanged()
+    void loadProviderModels(form.id)
+  }
 
   const addKb = async (): Promise<void> => {
     const row = await window.aurora.kb.addFolder()
@@ -299,22 +340,26 @@ return { meta, setup }
     setTimeout(() => setProxySaved(false), 2000)
   }
 
+  const reloadProviders = async (): Promise<void> => {
+    setProviders(await window.aurora.providers.list())
+  }
+
   useEffect(() => {
     if (!open) {
       // 关闭弹窗时丢弃未保存草稿
-      setDraftModel(null)
+      setDraftProvider(null)
       return
     }
     if (
-      models.length > 0 &&
-      !models.find((m) => m.id === selectedId) &&
-      selectedId !== draftModel?.id
+      providers.length > 0 &&
+      !providers.find((p) => p.id === selectedProviderId) &&
+      selectedProviderId !== draftProvider?.id
     ) {
-      const first = models.find((m) => m.provider !== 'mock') ?? models[0]
-      selectModel(first)
+      const first = providers.find((p) => p.kind !== 'mock') ?? providers[0]
+      selectProvider(first)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, models, draftModel?.id])
+  }, [open, providers, draftProvider?.id])
 
   useEffect(() => {
     if (open) {
@@ -336,74 +381,99 @@ return { meta, setup }
 
   if (!open) return null
 
-  const selectModel = (m: ModelConfig): void => {
-    setSelectedId(m.id)
-    setForm({ ...m })
+  const loadProviderModels = async (providerId: string): Promise<void> => {
+    const list = await window.aurora.models.list()
+    setProviderModels(list.filter((m) => m.providerId === providerId))
+  }
+
+  const selectProvider = (p: {
+    id: string
+    name: string
+    kind: string
+    baseUrl: string
+    apiKey: string
+    enabled: boolean
+  }): void => {
+    setSelectedProviderId(p.id)
+    setForm({
+      id: p.id,
+      name: p.name,
+      kind: p.kind,
+      baseUrl: p.baseUrl,
+      apiKey: p.apiKey,
+      enabled: p.enabled,
+    })
     setTestResult(null)
     setParamsDirty(false)
+    setModelAddOpen(false)
+    void loadProviderModels(p.id)
   }
 
   const save = async (): Promise<void> => {
     setSaving(true)
-    await window.aurora.models.save(form)
+    await window.aurora.providers.save(form)
     setSaving(false)
-    if (draftModel && draftModel.id === selectedId) {
+    if (draftProvider && draftProvider.id === selectedProviderId) {
       // 草稿转正：清除临时条目，列表刷新后自动选中正式条目
-      setDraftModel(null)
-      setSelectedId(form.id)
+      setDraftProvider(null)
+      setSelectedProviderId(form.id)
     }
-    setParamsDirty(false)
     onChanged()
   }
 
   const addNew = (): void => {
-    const m = emptyModel()
-    setDraftModel(m)
-    setSelectedId(m.id)
-    setForm(m)
+    const p = emptyProvider()
+    setDraftProvider(p)
+    setSelectedProviderId(p.id)
+    setForm(p)
+    setProviderModels([])
     setTestResult(null)
-    setParamsDirty(false)
+    setModelAddOpen(false)
   }
 
   const remove = async (): Promise<void> => {
-    if (draftModel && draftModel.id === selectedId) {
+    if (draftProvider && draftProvider.id === selectedProviderId) {
       // 删除未保存草稿：直接丢弃，回到已保存列表第一项（非 mock 优先）
-      const first = models.find((m) => m.provider !== 'mock') ?? models[0]
-      setDraftModel(null)
-      setForm(first ?? emptyModel())
-      setSelectedId(first?.id ?? '')
-      setTestResult(null)
+      const first = providers.find((p) => p.kind !== 'mock') ?? providers[0]
+      setDraftProvider(null)
+      if (first) selectProvider(first)
       return
     }
-    if (form.provider === 'mock') return
-    await window.aurora.models.remove(form.id)
-    setSelectedId('')
+    if (form.kind === 'mock') return
+    await window.aurora.providers.remove(form.id)
+    setSelectedProviderId('')
+    setProviderModels([])
     onChanged()
   }
 
   const test = async (): Promise<void> => {
     setTesting(true)
     setTestResult(null)
-    const r = await window.aurora.models.test(form)
+    const r = await window.aurora.providers.test({
+      baseUrl: form.baseUrl,
+      apiKey: form.apiKey,
+    })
     setTestResult(r)
     setTesting(false)
   }
 
-  /** 一键添加端点返回的模型（ccswitch 式自动获取） */
+  /** 一键添加端点返回的模型到当前提供商（ccswitch 式自动获取） */
   const addFetchedModel = async (
     modelId: string,
     contextLength?: number,
   ): Promise<void> => {
     await window.aurora.models.save({
-      ...form,
-      id: modelId,
+      id: `${form.id}::${modelId}`,
+      providerId: form.id,
       name: modelId,
+      modelId,
       enabled: true,
       // 按模型自动套用推荐默认参数（端点上下文长度优先参与计算）
       ...defaultParamsFor(modelId),
       maxTokens: maxTokensFor(modelId, contextLength),
     })
     onChanged()
+    void loadProviderModels(form.id)
     setTestResult((prev) =>
       prev
         ? { ...prev, modelIds: (prev.modelIds ?? []).filter((x) => x.id !== modelId) }
@@ -415,15 +485,17 @@ return { meta, setup }
     const ids = testResult?.modelIds ?? []
     for (const item of ids) {
       await window.aurora.models.save({
-        ...form,
-        id: item.id,
+        id: `${form.id}::${item.id}`,
+        providerId: form.id,
         name: item.id,
+        modelId: item.id,
         enabled: true,
         ...defaultParamsFor(item.id),
         maxTokens: maxTokensFor(item.id, item.contextLength),
       })
     }
     onChanged()
+    void loadProviderModels(form.id)
     setTestResult((prev) => (prev ? { ...prev, modelIds: [] } : prev))
   }
 
@@ -455,70 +527,68 @@ return { meta, setup }
         </div>
 
         <div className="flex min-h-0 flex-1">
-          {/* 模型列表 */}
+          {/* 提供商列表 */}
           <div className="flex w-60 shrink-0 flex-col border-r border-black/[0.06] p-2.5 dark:border-white/[0.08]">
             <div className="flex items-center justify-between px-2 pb-1.5">
               <span className="text-[11px] font-semibold uppercase tracking-wider text-black/35 dark:text-white/30">
-                模型
+                提供商
               </span>
               <button
                 onClick={addNew}
                 data-settings-add
-                title="添加模型"
+                title="添加提供商"
                 className="flex h-6 w-6 items-center justify-center rounded-md text-black/45 transition-colors hover:bg-black/[0.06] hover:text-apple-blue dark:text-white/45 dark:hover:bg-white/[0.08]"
               >
                 <Plus size={13} strokeWidth={2.4} />
               </button>
             </div>
             <div className="min-h-0 flex-1 space-y-0.5 overflow-y-auto">
-              {models.map((m) => (
+              {providers.map((p) => (
                 <button
-                  key={m.id}
-                  data-settings-model
-                  onClick={() => selectModel(m)}
+                  key={p.id}
+                  data-provider-row
+                  onClick={() => selectProvider(p)}
                   className={`flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left transition-colors ${
-                    m.id === selectedId
+                    p.id === selectedProviderId
                       ? 'bg-apple-blue/10 dark:bg-apple-blue/20'
                       : 'hover:bg-black/[0.04] dark:hover:bg-white/[0.06]'
                   }`}
                 >
                   <span
                     className={`h-1.5 w-1.5 shrink-0 rounded-full ${
-                      m.enabled
-                        ? m.provider === 'mock' || m.apiKey
-                          ? 'bg-apple-green'
-                          : 'bg-apple-orange'
-                        : 'bg-black/25 dark:bg-white/30'
+                      p.kind === 'mock' || p.apiKey
+                        ? 'bg-apple-green'
+                        : 'bg-apple-orange'
                     }`}
-                    title={m.enabled ? '已启用' : '已停用'}
+                    title={p.enabled ? '已启用' : '已停用'}
                   />
                   <span className="min-w-0 flex-1">
                     <span
                       className={`block truncate text-[12.5px] font-medium ${
-                        m.id === selectedId
+                        p.id === selectedProviderId
                           ? 'text-apple-blue dark:text-[#7ab8ff]'
                           : 'text-black/75 dark:text-white/75'
                       }`}
                     >
-                      {m.name}
+                      {p.name}
                     </span>
                     <span className="block truncate text-[10.5px] text-black/35 dark:text-white/35">
-                      {m.modelId || '未设置模型 ID'}
+                      {p.baseUrl || '本地演示'}
                     </span>
                   </span>
-                  {m.id === selectedId && (
+                  {p.id === selectedProviderId && (
                     <Check size={12} strokeWidth={2.6} className="shrink-0 text-apple-blue" />
                   )}
                 </button>
               ))}
-              {/* 未保存的新模型草稿：加号后立即出现，带醒目徽标 */}
-              {draftModel && (
+              {/* 未保存的新提供商草稿：加号后立即出现，带醒目徽标 */}
+              {draftProvider && (
                 <button
-                  key={draftModel.id}
-                  data-settings-model
-                  onClick={() => selectModel(draftModel)}
+                  key={draftProvider.id}
+                  data-provider-row
+                  onClick={() => selectProvider(draftProvider)}
                   className={`flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left transition-colors ${
-                    draftModel.id === selectedId
+                    draftProvider.id === selectedProviderId
                       ? 'bg-apple-blue/10 dark:bg-apple-blue/20'
                       : 'hover:bg-black/[0.04] dark:hover:bg-white/[0.06]'
                   }`}
@@ -527,12 +597,12 @@ return { meta, setup }
                   <span className="min-w-0 flex-1">
                     <span
                       className={`block truncate text-[12.5px] font-medium ${
-                        draftModel.id === selectedId
+                        draftProvider.id === selectedProviderId
                           ? 'text-apple-blue dark:text-[#7ab8ff]'
                           : 'text-black/75 dark:text-white/75'
                       }`}
                     >
-                      {form.name.trim() || '新模型'}
+                      {form.name.trim() || '新提供商'}
                     </span>
                     <span className="flex items-center gap-1 text-[10.5px] text-apple-orange">
                       <span
@@ -542,11 +612,11 @@ return { meta, setup }
                         未保存
                       </span>
                       <span className="truncate text-black/35 dark:text-white/35">
-                        {form.provider === 'mock' ? '本地 Mock' : form.modelId || '待配置'}
+                        {form.baseUrl || '待配置'}
                       </span>
                     </span>
                   </span>
-                  {draftModel.id === selectedId && (
+                  {draftProvider.id === selectedProviderId && (
                     <Check size={12} strokeWidth={2.6} className="shrink-0 text-apple-blue" />
                   )}
                 </button>
@@ -998,15 +1068,15 @@ return { meta, setup }
                   <select
                     data-settings-provider
                     className={field}
-                    value={form.provider}
-                    disabled={form.provider === 'mock'}
+                    value={form.kind}
+                    disabled={form.kind === 'mock'}
                     onChange={(e) => {
-                      const provider = e.target.value
-                      const preset = PROVIDERS.find((p) => p.id === provider)
+                      const kind = e.target.value
+                      const preset = PROVIDERS.find((p) => p.id === kind)
                       // 切换提供方自动填充对应默认 Base URL
                       setForm({
                         ...form,
-                        provider,
+                        kind,
                         baseUrl: preset?.defaultBaseUrl ?? '',
                       })
                     }}
@@ -1020,7 +1090,7 @@ return { meta, setup }
                 </div>
               </div>
 
-              {form.provider !== 'mock' && (
+              {form.kind !== 'mock' && (
                 <>
                   <div>
                     <label className={label}>Base URL</label>
@@ -1051,86 +1121,8 @@ return { meta, setup }
                       </button>
                     </div>
                   </div>
-                  <div>
-                    <label className={label}>模型 ID</label>
-                    <input
-                      data-settings-modelid
-                      className={field}
-                      value={form.modelId}
-                      onChange={(e) => {
-                        const modelId = e.target.value
-                        // 参数未被手动修改时，模型变化自动套用推荐默认值
-                        const patch = paramsDirty
-                          ? {}
-                          : defaultParamsFor(modelId)
-                        setForm({ ...form, modelId, ...patch })
-                      }}
-                      placeholder="deepseek-chat"
-                    />
-                  </div>
                 </>
               )}
-
-              <details data-adv-params className="group/adv rounded-xl bg-black/[0.03] px-3 py-2 dark:bg-white/[0.04]">
-                <summary className="flex cursor-pointer list-none items-center text-[12px] font-medium text-black/50 outline-none [&::-webkit-details-marker]:hidden dark:text-white/50">
-                  <ChevronDown
-                    size={13}
-                    strokeWidth={2.2}
-                    className="mr-1 transition-transform duration-200 group-open/adv:rotate-180"
-                  />
-                  高级设置
-                  <span className="ml-2 text-[10.5px] font-normal text-black/30 dark:text-white/30">
-                    Temperature · Max Tokens · Top P（已按模型自动适配，一般无需修改）
-                  </span>
-                </summary>
-                <div className="mt-2 grid grid-cols-3 gap-3">
-                  <div>
-                    <label className={label}>Temperature</label>
-                    <input
-                      className={field}
-                      type="number"
-                      min={0}
-                      max={2}
-                      step={0.1}
-                      value={form.temperature}
-                      onChange={(e) => {
-                        setParamsDirty(true)
-                        setForm({ ...form, temperature: Number(e.target.value) })
-                      }}
-                    />
-                  </div>
-                  <div>
-                    <label className={label}>Max Tokens</label>
-                    <input
-                      data-param-maxtokens
-                      className={field}
-                      type="number"
-                      min={1}
-                      step={256}
-                      value={form.maxTokens}
-                      onChange={(e) => {
-                        setParamsDirty(true)
-                        setForm({ ...form, maxTokens: Number(e.target.value) })
-                      }}
-                    />
-                  </div>
-                  <div>
-                    <label className={label}>Top P</label>
-                    <input
-                      className={field}
-                      type="number"
-                      min={0}
-                      max={1}
-                      step={0.05}
-                      value={form.topP}
-                      onChange={(e) => {
-                        setParamsDirty(true)
-                        setForm({ ...form, topP: Number(e.target.value) })
-                      }}
-                    />
-                  </div>
-                </div>
-              </details>
 
               <label className="flex cursor-pointer items-center gap-2.5">
                 <span
@@ -1146,7 +1138,7 @@ return { meta, setup }
                   />
                 </span>
                 <span className="text-[12.5px] text-black/60 dark:text-white/60">
-                  启用该模型
+                  启用该提供商
                 </span>
               </label>
 
@@ -1173,7 +1165,7 @@ return { meta, setup }
                 >
                   <div className="flex items-center justify-between px-1 pb-1.5">
                     <span className="text-[11px] font-semibold uppercase tracking-wider text-black/35 dark:text-white/30">
-                      可用模型（点击添加）
+                      端点可用模型（点击添加到该提供商）
                     </span>
                     <button
                       onClick={() => void addAllFetched()}
@@ -1213,7 +1205,7 @@ return { meta, setup }
                 >
                   保存
                 </button>
-                {form.provider !== 'mock' && (
+                {form.kind !== 'mock' && (
                   <>
                     <button
                       onClick={test}
@@ -1230,7 +1222,7 @@ return { meta, setup }
                     </button>
                     <button
                       onClick={remove}
-                      data-model-remove
+                      data-provider-remove
                       className="ml-auto flex h-9 items-center gap-1.5 rounded-xl px-3.5 text-[13px] font-medium text-apple-red/80 transition-colors hover:bg-apple-red/10"
                     >
                       <Trash2 size={13} />
@@ -1238,6 +1230,183 @@ return { meta, setup }
                     </button>
                   </>
                 )}
+              </div>
+
+              {/* 该提供商的模型管理 */}
+              <div className="border-t border-black/[0.06] pt-3 dark:border-white/[0.08]">
+                <div className="mb-1.5 flex items-center justify-between">
+                  <label className={label}>该提供商的模型</label>
+                  <button
+                    data-model-add
+                    onClick={() => setModelAddOpen((v) => !v)}
+                    title="手动添加模型"
+                    className="flex h-6 w-6 items-center justify-center rounded-md text-black/45 transition-colors hover:bg-black/[0.06] hover:text-apple-blue dark:text-white/45 dark:hover:bg-white/[0.08]"
+                  >
+                    <Plus size={13} strokeWidth={2.4} />
+                  </button>
+                </div>
+                <div className="space-y-1.5">
+                  {providerModels.length === 0 && (
+                    <p className="rounded-lg bg-black/[0.03] px-3 py-2.5 text-[11.5px] text-black/40 dark:bg-white/[0.05] dark:text-white/40">
+                      该提供商下暂无模型：点右上角 + 手动添加，或测试连接后从端点列表一键添加。
+                    </p>
+                  )}
+                  {providerModels.map((m) => (
+                    <div
+                      key={m.id}
+                      data-model-row
+                      className="rounded-xl bg-black/[0.035] px-3 py-2 dark:bg-white/[0.05]"
+                    >
+                      <div className="flex items-center gap-2">
+                        <input
+                          className="min-w-0 flex-1 rounded-md bg-transparent text-[12.5px] font-medium text-black/75 outline-none dark:text-white/80"
+                          value={m.name}
+                          onChange={(e) => {
+                            const next = { ...m, name: e.target.value }
+                            setProviderModels((prev) =>
+                              prev.map((x) => (x.id === m.id ? next : x)),
+                            )
+                            void window.aurora.models.save(next)
+                            onChanged()
+                          }}
+                        />
+                        <span className="shrink-0 font-mono text-[10.5px] text-black/35 dark:text-white/35">
+                          {m.modelId}
+                        </span>
+                        <span
+                          onClick={() => {
+                            const next = { ...m, enabled: !m.enabled }
+                            setProviderModels((prev) =>
+                              prev.map((x) => (x.id === m.id ? next : x)),
+                            )
+                            void window.aurora.models.save(next)
+                            onChanged()
+                          }}
+                          title="启用/停用"
+                          className={`shrink-0 cursor-pointer rounded-full transition-colors duration-200 ${
+                            m.enabled ? 'bg-apple-green' : 'bg-black/20 dark:bg-white/20'
+                          }`}
+                          style={{ height: 18, width: 32 }}
+                        >
+                          <span
+                            className="block rounded-full bg-white shadow-soft transition-all duration-200"
+                            style={{
+                              height: 14,
+                              width: 14,
+                              marginTop: 2,
+                              marginLeft: m.enabled ? 15 : 2,
+                            }}
+                          />
+                        </span>
+                        <button
+                          title="删除模型"
+                          onClick={() => {
+                            void window.aurora.models.remove(m.id)
+                            setProviderModels((prev) =>
+                              prev.filter((x) => x.id !== m.id),
+                            )
+                            onChanged()
+                          }}
+                          className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-black/35 transition-colors hover:bg-apple-red/10 hover:text-apple-red dark:text-white/35"
+                        >
+                          <Trash2 size={12} strokeWidth={2.2} />
+                        </button>
+                      </div>
+                      <details className="group/mp mt-1">
+                        <summary className="flex cursor-pointer list-none items-center text-[11px] font-medium text-black/40 outline-none [&::-webkit-details-marker]:hidden dark:text-white/40">
+                          <ChevronDown
+                            size={12}
+                            strokeWidth={2.2}
+                            className="mr-1 transition-transform duration-200 group-open/mp:rotate-180"
+                          />
+                          参数（Temperature · Max Tokens · Top P）
+                        </summary>
+                        <div className="mt-1.5 grid grid-cols-3 gap-2">
+                          <input
+                            className={field}
+                            type="number"
+                            min={0}
+                            max={2}
+                            step={0.1}
+                            value={m.temperature}
+                            onChange={(e) => {
+                              const next = { ...m, temperature: Number(e.target.value) }
+                              setProviderModels((prev) =>
+                                prev.map((x) => (x.id === m.id ? next : x)),
+                              )
+                              void window.aurora.models.save(next)
+                              onChanged()
+                            }}
+                          />
+                          <input
+                            className={field}
+                            type="number"
+                            min={1}
+                            step={256}
+                            value={m.maxTokens}
+                            onChange={(e) => {
+                              const next = { ...m, maxTokens: Number(e.target.value) }
+                              setProviderModels((prev) =>
+                                prev.map((x) => (x.id === m.id ? next : x)),
+                              )
+                              void window.aurora.models.save(next)
+                              onChanged()
+                            }}
+                          />
+                          <input
+                            className={field}
+                            type="number"
+                            min={0}
+                            max={1}
+                            step={0.05}
+                            value={m.topP}
+                            onChange={(e) => {
+                              const next = { ...m, topP: Number(e.target.value) }
+                              setProviderModels((prev) =>
+                                prev.map((x) => (x.id === m.id ? next : x)),
+                              )
+                              void window.aurora.models.save(next)
+                              onChanged()
+                            }}
+                          />
+                        </div>
+                      </details>
+                    </div>
+                  ))}
+                  {modelAddOpen && (
+                    <div className="rounded-xl border border-apple-blue/25 p-2.5">
+                      <div className="flex items-center gap-2">
+                        <input
+                          data-settings-modelid
+                          className={`${field} flex-1`}
+                          value={modelAddId}
+                          onChange={(e) => {
+                            setModelAddId(e.target.value)
+                            setParamsDirty(false)
+                          }}
+                          placeholder="模型 ID，如 deepseek-reasoner"
+                        />
+                        <button
+                          data-model-add-confirm
+                          onClick={() => void confirmAddModel()}
+                          className="h-8 shrink-0 rounded-lg bg-apple-blue px-3.5 text-[12px] font-medium text-white transition-all duration-200 ease-spring hover:brightness-110 active:scale-[0.96]"
+                        >
+                          添加
+                        </button>
+                      </div>
+                      {modelAddId.trim() && (
+                        <p className="mt-1.5 text-[10.5px] text-black/40 dark:text-white/40">
+                          参数将自动适配：Temperature {defaultParamsFor(modelAddId).temperature} ·
+                          Max Tokens{' '}
+                          <span data-param-maxtokens>
+                            {maxTokensFor(modelAddId)}
+                          </span>{' '}
+                          · Top P {defaultParamsFor(modelAddId).topP}（添加后可修改）
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           </div>

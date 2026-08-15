@@ -3,16 +3,27 @@ import { contextBridge, ipcRenderer } from 'electron'
 export type ThemeSource = 'system' | 'light' | 'dark'
 
 export interface ModelConfig {
+  /** 条目唯一 id = `${providerId}::${modelId}` */
   id: string
+  providerId: string
+  providerName: string
+  providerKind: string
   name: string
-  provider: string
-  baseUrl: string
-  apiKey: string
   modelId: string
   temperature: number
   maxTokens: number
   topP: number
   enabled: boolean
+}
+
+export interface ProviderRow {
+  id: string
+  name: string
+  kind: string
+  baseUrl: string
+  apiKey: string
+  enabled: boolean
+  createdAt: number
 }
 
 export interface ChatStartRequest {
@@ -140,13 +151,30 @@ const api = {
       return () => ipcRenderer.removeListener('theme:system-changed', listener)
     },
   },
+  providers: {
+    list: (): Promise<ProviderRow[]> => ipcRenderer.invoke('providers:list'),
+    save: (p: {
+      id: string
+      name: string
+      kind: string
+      baseUrl: string
+      apiKey: string
+      enabled: boolean
+    }): Promise<boolean> => ipcRenderer.invoke('providers:save', p),
+    remove: (id: string): Promise<boolean> =>
+      ipcRenderer.invoke('providers:delete', id),
+    test: (m: {
+      baseUrl: string
+      apiKey: string
+    }): Promise<ConnectionTestResult> =>
+      ipcRenderer.invoke('providers:test', m),
+  },
   models: {
     list: (): Promise<ModelConfig[]> => ipcRenderer.invoke('models:list'),
-    save: (m: ModelConfig): Promise<boolean> => ipcRenderer.invoke('models:save', m),
+    save: (m: ModelConfig & { providerId: string }): Promise<boolean> =>
+      ipcRenderer.invoke('models:save', m),
     remove: (id: string): Promise<boolean> =>
       ipcRenderer.invoke('models:delete', id),
-    test: (m: ModelConfig): Promise<ConnectionTestResult> =>
-      ipcRenderer.invoke('models:test', m),
   },
   dialog: {
     pickFiles: (): Promise<PickedFile[]> => ipcRenderer.invoke('dialog:pickFiles'),

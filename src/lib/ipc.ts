@@ -1,16 +1,27 @@
 export type ThemeSource = 'system' | 'light' | 'dark'
 
 export interface ModelConfig {
+  /** 条目唯一 id = `${providerId}::${modelId}` */
   id: string
+  providerId: string
+  providerName: string
+  providerKind: string
   name: string
-  provider: string
-  baseUrl: string
-  apiKey: string
   modelId: string
   temperature: number
   maxTokens: number
   topP: number
   enabled: boolean
+}
+
+export interface ProviderRow {
+  id: string
+  name: string
+  kind: string
+  baseUrl: string
+  apiKey: string
+  enabled: boolean
+  createdAt: number
 }
 
 export interface ChatStartRequest {
@@ -126,11 +137,23 @@ export interface AuroraApi {
     setSource: (s: ThemeSource) => void
     onSystemChanged: (cb: (dark: boolean) => void) => () => void
   }
+  providers: {
+    list: () => Promise<ProviderRow[]>
+    save: (p: {
+      id: string
+      name: string
+      kind: string
+      baseUrl: string
+      apiKey: string
+      enabled: boolean
+    }) => Promise<boolean>
+    remove: (id: string) => Promise<boolean>
+    test: (m: { baseUrl: string; apiKey: string }) => Promise<ConnectionTestResult>
+  }
   models: {
     list: () => Promise<ModelConfig[]>
-    save: (m: ModelConfig) => Promise<boolean>
+    save: (m: ModelConfig & { providerId: string }) => Promise<boolean>
     remove: (id: string) => Promise<boolean>
-    test: (m: ModelConfig) => Promise<ConnectionTestResult>
   }
   dialog: {
     pickFiles: () => Promise<PickedFile[]>

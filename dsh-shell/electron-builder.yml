@@ -1,0 +1,29 @@
+appId: com.aurora.dsh
+productName: Aurora DSH
+directories:
+  output: ../release/dsh-shell
+files:
+  - main.mjs
+  - preload.cjs
+  - pages/**/*
+  - src/**/*
+  - assets/**/*
+  - package.json
+extraResources:
+  # 内置 dsh 运行时 = 单个 zip（node.exe + node_modules）：
+  # 安装器只复制一个文件，秒级完成；首启解压到共享临时目录。
+  - from: assets/dsh-runtime.zip
+    to: dsh-runtime.zip
+electronVersion: 43.4.0
+afterPack: scripts/after-pack.cjs
+win:
+  target:
+    - nsis
+  icon: assets/icon.ico
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Aurora DSH
+  artifactName: Aurora-DSH-Setup-${version}.${ext}

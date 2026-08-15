@@ -22,14 +22,19 @@ import {
   deleteConversation,
   deleteMessagesFrom,
   deleteModel,
+  deleteProvider,
   getConversationSystemPrompt,
+  getModel,
+  getProvider,
   getSetting,
   initDb,
   listConversations,
   listMessages,
   listModels,
+  listProviders,
   renameConversation,
   saveModel,
+  saveProvider,
   setConversationPinned,
   setConversationSystemPrompt,
   setSetting,
@@ -386,28 +391,35 @@ const DOM_AUDIT = `
   if (settingsBtn) settingsBtn.click()
   await sleep(450)
   out.settingsOpen = !!document.querySelector('[data-settings]')
-  out.settingsModelRows = document.querySelectorAll('[data-settings-model]').length
+  out.settingsProviderRows = document.querySelectorAll('[data-provider-row]').length
   out.settingsNameInput = !!document.querySelector('[data-settings-name]')
   out.settingsBaseUrlInput = !!document.querySelector('[data-settings-baseurl]')
   out.settingsApiKeyInput = !!document.querySelector('[data-settings-apikey]')
-  out.settingsModelIdInput = !!document.querySelector('[data-settings-modelid]')
   out.settingsProxyInput = !!document.querySelector('[data-proxy-input]')
   out.openDataDirBtn = !!document.querySelector('[data-open-datadir]')
   out.appVersion = (document.querySelector('[data-app-version]') || {}).textContent || ''
 
-  // 添加新模型草稿流程：加号 → 未保存条目 → 删除恢复
+  // 添加新提供商草稿流程：加号 → 未保存条目 → 删除恢复
   const addBtn = document.querySelector('[data-settings-add]')
   if (addBtn) addBtn.click()
   await sleep(350)
   out.draftBadge = !!document.querySelector('[data-unsaved-badge]')
-  const draftItem = Array.from(document.querySelectorAll('[data-settings-model]')).find(
+  const draftItem = Array.from(document.querySelectorAll('[data-provider-row]')).find(
     (b) => (b.textContent || '').includes('未保存')
   )
   out.draftItemVisible = !!draftItem
   out.draftActive = draftItem
     ? draftItem.className.includes('bg-apple-blue')
     : false
-  // 参数自动适配：模型 ID 输入 deepseek-reasoner → Max Tokens 应为 32768
+  const removeBtn = document.querySelector('[data-provider-remove]')
+  if (removeBtn) removeBtn.click()
+  await sleep(350)
+  out.draftCleared = !document.querySelector('[data-unsaved-badge]')
+
+  // 参数自动适配：打开手动添加模型表单，输入 deepseek-reasoner → Max Tokens 预览 32768
+  const modelAddBtn = document.querySelector('[data-model-add]')
+  if (modelAddBtn) modelAddBtn.click()
+  await sleep(300)
   const modelIdInput = document.querySelector('[data-settings-modelid]')
   if (modelIdInput) {
     const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set
@@ -415,16 +427,11 @@ const DOM_AUDIT = `
     modelIdInput.dispatchEvent(new Event('input', { bubbles: true }))
   }
   await sleep(350)
-  const advSummary = document.querySelector('[data-adv-params] summary')
-  if (advSummary) advSummary.click()
+  out.paramAutoAdapted = String(
+    (document.querySelector('[data-param-maxtokens]') || {}).textContent || ''
+  ).includes('32768')
+  if (modelAddBtn) modelAddBtn.click()
   await sleep(250)
-  out.paramAutoAdapted = (
-    (document.querySelector('[data-param-maxtokens]') || {}).value || ''
-  ) === '32768'
-  const removeBtn = document.querySelector('[data-model-remove]')
-  if (removeBtn) removeBtn.click()
-  await sleep(350)
-  out.draftCleared = !document.querySelector('[data-unsaved-badge]')
 
   // 提供方切换自动填充 Base URL（deepseek → grok → 断言 → 切回）
   const provSel = document.querySelector('[data-settings-provider]')
@@ -1111,12 +1118,11 @@ async function runSmoke(w: BrowserWindow, errors: string[]): Promise<void> {
     failures.push(`标题栏标题异常: ${dom.titlebarTitle}`)
   // 设置弹窗断言
   if (dom.settingsOpen !== true) failures.push('设置弹窗未打开')
-  if (dom.settingsModelRows < 3) failures.push(`设置模型列表数量异常: ${dom.settingsModelRows}`)
+  if (dom.settingsProviderRows < 2) failures.push(`设置提供商列表数量异常: ${dom.settingsProviderRows}`)
   if (
     dom.settingsNameInput !== true ||
     dom.settingsBaseUrlInput !== true ||
     dom.settingsApiKeyInput !== true ||
-    dom.settingsModelIdInput !== true ||
     dom.settingsProxyInput !== true
   )
     failures.push('设置表单字段缺失')
@@ -1142,12 +1148,12 @@ async function runSmoke(w: BrowserWindow, errors: string[]): Promise<void> {
     failures.push(`动态模型列表未展示: ${dom.fetchedModelsShown}`)
   if (dom.fetchedContextBadge !== true) failures.push('上下文长度徽标缺失')
   // 动态参数链路断言：smoke-model-128k 的 Max Tokens 应自动计算为 8192
-  const fetchedRow = listModels().find((m) => m.id === 'smoke-model-128k')
+  const fetchedRow = listModels().find((m) => m.modelId === 'smoke-model-128k')
   if (!fetchedRow || fetchedRow.maxTokens !== 8192)
     failures.push(
       `端点上下文动态参数失效: ${fetchedRow ? fetchedRow.maxTokens : '未入库'}`,
     )
-  if (fetchedRow) deleteModel('smoke-model-128k')
+  if (fetchedRow) deleteModel(fetchedRow.id)
   if (dom.pluginRows < 1) failures.push(`设置弹窗插件列表缺失: ${dom.pluginRows}`)
   if (dom.pluginRunning !== true) failures.push('示例插件未处于运行状态')
   if (dom.settingsClosed !== true) failures.push('设置弹窗未关闭')
@@ -1333,7 +1339,16 @@ nativeTheme.on('updated', () => {
   win?.webContents.send('theme:system-changed', nativeTheme.shouldUseDarkColors)
 })
 
-// ---- 模型与设置 ----
+// ---- 提供商与模型 ----
+ipcMain.handle('providers:list', () => listProviders())
+ipcMain.handle('providers:save', (_e, p) => {
+  saveProvider(p)
+  return true
+})
+ipcMain.handle('providers:delete', (_e, id: string) => {
+  deleteProvider(id)
+  return true
+})
 ipcMain.handle('models:list', () => listModels())
 ipcMain.handle('models:save', (_e, m) => {
   saveModel(m)
@@ -1565,8 +1580,8 @@ ipcMain.handle('dialog:pickFiles', async () => {
   })
 })
 
-// ---- 模型连接测试 ----
-ipcMain.handle('models:test', async (_e, m) => {
+// ---- 提供商连接测试（返回端点可用模型列表）----
+ipcMain.handle('providers:test', async (_e, m: { baseUrl: string; apiKey: string }) => {
   // 冒烟分支：返回带上下文长度的假模型列表，验证动态参数链路
   if (SMOKE) {
     return {
@@ -1641,7 +1656,13 @@ app.whenReady().then(async () => {
   const backupPath = doAutoBackup()
   bootLog('auto backup: ' + (backupPath ?? 'skipped'))
   trayCreated = createTray()
-  registerChatIpc(listModels)
+  registerChatIpc((modelEntryId: string) => {
+    const model = getModel(modelEntryId)
+    if (!model) return null
+    const provider = getProvider(model.providerId)
+    if (!provider) return null
+    return { model, provider }
+  })
   bootLog('chat ipc registered')
   // 恢复用户配置的 MCP 服务器（冒烟模式由 runSmoke 显式配置）
   if (!SMOKE) {

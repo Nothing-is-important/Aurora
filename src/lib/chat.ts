@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { ChatUsage, ModelConfig, PickedFile, ToolStep } from './ipc'
+import type {
+  ChatUsage,
+  ModelConfig,
+  PickedFile,
+  ProviderRow,
+  ToolStep,
+} from './ipc'
 import {
   BUILTIN_MODES,
   loadActiveModeId,
@@ -27,9 +33,11 @@ let smokeNotified = false
 export interface ChatController {
   messages: ChatMessage[]
   models: ModelConfig[]
+  providers: ProviderRow[]
   modelId: string
   setModelId: (id: string) => void
   reloadModels: () => Promise<void>
+  reloadProviders: () => Promise<void>
   modes: ChatMode[]
   modeId: string
   setMode: (id: string) => void
@@ -66,6 +74,7 @@ function smokeLog(op: string, extra?: unknown): void {
 export function useChat(opts: UseChatOptions): ChatController {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [models, setModels] = useState<ModelConfig[]>([])
+  const [providers, setProviders] = useState<ProviderRow[]>([])
   const [modelId, setModelIdState] = useState('')
   const [modes, setModes] = useState<ChatMode[]>(BUILTIN_MODES)
   const [modeId, setModeIdState] = useState('standard')
@@ -228,6 +237,11 @@ export function useChat(opts: UseChatOptions): ChatController {
     setModels(list)
   }, [])
 
+  const reloadProviders = useCallback(async () => {
+    const list = await window.aurora.providers.list()
+    setProviders(list)
+  }, [])
+
   const reloadModes = useCallback(async () => {
     const custom = await loadCustomModes()
     setModes([...BUILTIN_MODES, ...custom])
@@ -238,6 +252,12 @@ export function useChat(opts: UseChatOptions): ChatController {
     void loadActiveModeId().then((id) => setModeIdState(id))
     void reloadModes()
   }, [reloadModes])
+
+  // 加载提供商与模型
+  useEffect(() => {
+    void reloadProviders()
+    void reloadModels()
+  }, [reloadProviders, reloadModels])
 
   const setMode = useCallback((id: string) => {
     setModeIdState(id)
@@ -335,7 +355,7 @@ export function useChat(opts: UseChatOptions): ChatController {
 
         let userContent: string | unknown[]
         // 图片多模态：仅非 DeepSeek 官方端点（官方暂不支持视觉）
-        if (imageFiles.length > 0 && model && model.provider !== 'deepseek') {
+        if (imageFiles.length > 0 && model && model.providerKind !== 'deepseek') {
           userContent = [
             { type: 'text', text: userText },
             ...imageFiles.map((f) => ({
@@ -412,17 +432,21 @@ export function useChat(opts: UseChatOptions): ChatController {
   )
 
   // 冒烟模式：模型加载后自动发起 Mock 对话
+  // 注意：不使用 effect 清理函数取消定时器——send 依赖 messages/models/modeId，
+  // 加载期间这些状态一旦变化会触发 effect 重跑并清掉定时器，导致自动对话永不发起。
+  // 通过 sendRef 永远取最新 send，避免竞态。
+  const sendRef = useRef(send)
+  sendRef.current = send
   useEffect(() => {
     if (!window.aurora.smoke || smokeAutoStarted || models.length === 0) return
     smokeAutoStarted = true
-    const mock = models.find((m) => m.provider === 'mock')
+    const mock = models.find((m) => m.providerKind === 'mock')
     if (mock) {
-      const t = setTimeout(() => {
-        send('冒烟测试：请演示一个包含代码、公式和列表的综合示例', mock.id)
+      setTimeout(() => {
+        sendRef.current('冒烟测试：请演示一个包含代码、公式和列表的综合示例', mock.id)
       }, 250)
-      return () => clearTimeout(t)
     }
-  }, [models, send])
+  }, [models])
 
   const stop = useCallback(() => {
     const id = streamingRef.current
@@ -476,9 +500,11 @@ export function useChat(opts: UseChatOptions): ChatController {
   return {
     messages,
     models,
+    providers,
     modelId,
     setModelId,
     reloadModels,
+    reloadProviders,
     modes,
     modeId,
     setMode,

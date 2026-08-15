@@ -260,6 +260,7 @@ export default function ChatArea({ chat, settingsOpen, onSmokePhase2Done }: Chat
   const {
     messages,
     models,
+    providers,
     modelId,
     setModelId,
     modes,
@@ -294,6 +295,27 @@ export default function ChatArea({ chat, settingsOpen, onSmokePhase2Done }: Chat
   const ctxTokens = estimateTokens(messages)
   const ctxWindow = contextWindow(activeModel?.modelId)
   const ctxRatio = ctxWindow > 0 ? ctxTokens / ctxWindow : 0
+
+  /** 模型是否就绪（mock 或所属提供商已配置 Key） */
+  const modelReady = (m: ModelConfig): boolean => {
+    if (m.providerKind === 'mock') return true
+    const p = providers.find((x) => x.id === m.providerId)
+    return !!p?.apiKey
+  }
+
+  /** 按提供商分组（保持提供商顺序、组内保持模型顺序） */
+  const groupedModels: [string, ModelConfig[]][] = (() => {
+    const order: string[] = []
+    const map = new Map<string, ModelConfig[]>()
+    for (const m of models) {
+      if (!map.has(m.providerName)) {
+        map.set(m.providerName, [])
+        order.push(m.providerName)
+      }
+      map.get(m.providerName)!.push(m)
+    }
+    return order.map((name) => [name, map.get(name)!])
+  })()
 
   useEffect(() => {
     const sc = scrollRef.current
@@ -499,7 +521,7 @@ export default function ChatArea({ chat, settingsOpen, onSmokePhase2Done }: Chat
         >
           <span
             className={`h-1.5 w-1.5 rounded-full ${
-              activeModel && (activeModel.provider === 'mock' || activeModel.apiKey)
+              activeModel && modelReady(activeModel)
                 ? 'bg-apple-green'
                 : 'bg-black/25 dark:bg-white/30'
             }`}
@@ -513,50 +535,53 @@ export default function ChatArea({ chat, settingsOpen, onSmokePhase2Done }: Chat
         </button>
 
         {menuOpen && (
-          <div className="glass-strong animate-scaleIn absolute top-11 z-30 w-64 origin-top rounded-2xl p-1.5 shadow-glass">
+          <div className="glass-strong animate-scaleIn absolute top-11 z-30 w-72 origin-top rounded-2xl p-1.5 shadow-glass">
             {models.length === 0 && (
               <p className="px-3 py-4 text-center text-[12px] text-black/40 dark:text-white/40">
-                暂无可用模型
+                暂无可用模型，请先在设置中添加提供商
               </p>
             )}
-            {models.map((m) => (
-              <button
-                key={m.id}
-                data-model-item
-                onClick={() => {
-                  setModelId(m.id)
-                  setMenuOpen(false)
-                }}
-                className={`flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left transition-colors ${
-                  m.id === modelId
-                    ? 'bg-black/[0.05] dark:bg-white/[0.09]'
-                    : 'hover:bg-black/[0.04] dark:hover:bg-white/[0.06]'
-                }`}
-              >
-                <span
-                  className={`h-1.5 w-1.5 shrink-0 rounded-full ${
-                    m.provider === 'mock' || m.apiKey
-                      ? 'bg-apple-green'
-                      : 'bg-black/25 dark:bg-white/30'
-                  }`}
-                />
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-[13px] font-medium text-black/80 dark:text-white/85">
-                    {m.name}
-                  </span>
-                  <span className="block text-[10.5px] text-black/35 dark:text-white/35">
-                    {m.provider === 'mock'
-                      ? '本地演示'
-                      : m.provider === 'deepseek'
-                        ? '官方 API'
-                        : '兼容端点'}
-                    {m.provider !== 'mock' && !m.apiKey && ' · 未配置 Key'}
-                  </span>
-                </span>
-                {m.id === modelId && (
-                  <Sparkles size={13} className="shrink-0 text-apple-blue" />
-                )}
-              </button>
+            {groupedModels.map(([providerName, items]) => (
+              <div key={providerName} className="mb-0.5">
+                <p className="px-3 pb-0.5 pt-1.5 text-[10px] font-semibold uppercase tracking-wider text-black/30 dark:text-white/30">
+                  {providerName}
+                </p>
+                {items.map((m) => (
+                  <button
+                    key={m.id}
+                    data-model-item
+                    onClick={() => {
+                      setModelId(m.id)
+                      setMenuOpen(false)
+                    }}
+                    className={`flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left transition-colors ${
+                      m.id === modelId
+                        ? 'bg-black/[0.05] dark:bg-white/[0.09]'
+                        : 'hover:bg-black/[0.04] dark:hover:bg-white/[0.06]'
+                    }`}
+                  >
+                    <span
+                      className={`h-1.5 w-1.5 shrink-0 rounded-full ${
+                        modelReady(m)
+                          ? 'bg-apple-green'
+                          : 'bg-black/25 dark:bg-white/30'
+                      }`}
+                    />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-[13px] font-medium text-black/80 dark:text-white/85">
+                        {m.name}
+                      </span>
+                      <span className="block truncate font-mono text-[10.5px] text-black/35 dark:text-white/35">
+                        {m.modelId}
+                        {!modelReady(m) && ' · 未配置 Key'}
+                      </span>
+                    </span>
+                    {m.id === modelId && (
+                      <Sparkles size={13} className="shrink-0 text-apple-blue" />
+                    )}
+                  </button>
+                ))}
+              </div>
             ))}
           </div>
         )}

@@ -12,3 +12,24 @@ Thumbs.db
 .env.*
 .npmrc
 docs/xiaohongshu-文案.md
+
+smoke-out*.txt
+
+poc-dsh/.home/
+poc-run.log
+poc-dsh/.home-fresh/
+
+# dsh-shell 运行时与冒烟产物
+dsh-shell/.dsh-runtime/
+dsh-shell/.smoke-userdata*/
+dsh-shell/smoke-full.log
+dsh-shell/smoke-screenshot.png
+
+# dsh-shell 运行时打包产物
+dsh-shell/assets/dsh-runtime.zip
+dsh-shell/.node-portable.zip
+dsh-shell/.runtime-staging/
+
+aurora-native/smoke-run.log
+aurora-native/build.log
+aurora-native/assets/dsh-runtime.zip
