@@ -29,3 +29,6 @@ dsh-shell/smoke-screenshot.png
 dsh-shell/assets/dsh-runtime.zip
 dsh-shell/.node-portable.zip
 dsh-shell/.runtime-staging/
+
+aurora-native/smoke-run.log
+aurora-native/build.log
