@@ -1,0 +1,23 @@
+appId: com.aurora.dsh
+productName: Aurora DSH
+directories:
+  output: ../release/dsh-shell
+files:
+  - main.mjs
+  - preload.cjs
+  - pages/**/*
+  - src/**/*
+  - assets/**/*
+  - package.json
+electronVersion: 43.4.0
+win:
+  target:
+    - nsis
+  icon: assets/icon.png
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Aurora DSH
+  artifactName: Aurora-DSH-Setup-${version}.${ext}

@@ -1,10 +1,13 @@
-// 一次性脚本：校验 PoC 截图内容（尺寸 + 采样像素 + 判定是否为 DSH Web 深色界面）
-import { nativeImage } from 'electron'
-import { readFileSync, statSync } from 'node:fs'
+// 一次性脚本：校验截图内容（尺寸 + 采样像素 + 判定是否为 DSH Web 深色界面）
+// 用法：electron check-png.mjs <png路径>（默认 smoke-screenshot.png）
+import { app, nativeImage } from 'electron'
+import { statSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { join } from 'node:path'
 
-const file = join(fileURLToPath(new URL('.', import.meta.url)), 'poc-screenshot.png')
+const file = process.argv[process.argv.length - 1].endsWith('.png')
+  ? process.argv[process.argv.length - 1]
+  : join(fileURLToPath(new URL('.', import.meta.url)), 'smoke-screenshot.png')
 const bytes = statSync(file).size
 const img = nativeImage.createFromPath(file)
 const { width, height } = img.getSize()
@@ -40,4 +43,4 @@ console.log(JSON.stringify({
   corner: sample(0, 0),
   samples: grid,
 }, null, 2))
-process.exit(0)
+app.exit(0)

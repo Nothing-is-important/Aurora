@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<title>Aurora · DeepSeek Harness</title>
+<style>
+  :root { color-scheme: dark; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+    background: #101014; color: #d5d5dc; height: 100vh; overflow: hidden;
+    -webkit-app-region: drag; user-select: none;
+  }
+  .wrap { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; padding: 40px; text-align: center; }
+  .logo { width: 72px; height: 72px; border-radius: 20px; background: linear-gradient(135deg, #0a84ff, #5e5ce6); display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 22px; color: #fff; box-shadow: 0 12px 32px rgba(10,132,255,.35); }
+  h1 { font-size: 19px; font-weight: 600; }
+  .sub { font-size: 13px; color: #8a8a93; max-width: 520px; line-height: 1.7; }
+  .status { font-size: 13px; color: #8a8a93; }
+  .spinner { width: 26px; height: 26px; border: 3px solid rgba(255,255,255,.15); border-top-color: #0a84ff; border-radius: 50%; animation: spin 1s linear infinite; margin: 0 auto 6px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .row { display: flex; gap: 12px; -webkit-app-region: no-drag; }
+  button {
+    font-family: inherit; font-size: 13px; font-weight: 600; border: none; cursor: pointer;
+    border-radius: 10px; padding: 10px 22px; transition: transform .15s, filter .15s;
+  }
+  button:active { transform: scale(.96); }
+  .primary { background: #0a84ff; color: #fff; }
+  .primary:hover { filter: brightness(1.1); }
+  .ghost { background: rgba(255,255,255,.07); color: #d5d5dc; }
+  .ghost:hover { background: rgba(255,255,255,.12); }
+  code { font-family: Consolas, monospace; background: rgba(255,255,255,.08); padding: 2px 8px; border-radius: 6px; font-size: 12.5px; -webkit-app-region: no-drag; user-select: text; }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="logo">DSH</div>
+  <h1 id="title">DeepSeek Harness 服务</h1>
+  <div id="view-restarting">
+    <div class="spinner"></div>
+    <p class="status" id="restart-status">正在启动 DeepSeek Harness 服务…</p>
+  </div>
+  <div id="view-no-dsh" class="hidden">
+    <p class="sub">
+      未检测到 <b>dsh</b> 命令行工具（DeepSeek Harness CLI）。<br />
+      请在终端执行以下命令安装，然后点击「重新检测」：
+    </p>
+    <p><code>npm install -g @deepseek-ai/dsh</code></p>
+    <div class="row">
+      <button class="primary" id="btn-retry">重新检测</button>
+      <button class="ghost" id="btn-guide">查看安装文档</button>
+    </div>
+  </div>
+  <div id="view-error" class="hidden">
+    <p class="sub" id="error-text">服务启动失败。</p>
+    <div class="row">
+      <button class="primary" id="btn-retry2">重试</button>
+    </div>
+  </div>
+</div>
+<script>
+  const $ = (id) => document.getElementById(id)
+  const show = (id) => ['view-restarting', 'view-no-dsh', 'view-error'].forEach((x) => $(x).classList.toggle('hidden', x !== id))
+
+  const render = (s) => {
+    $('title').textContent = s.title || 'DeepSeek Harness 服务'
+    if (s.phase === 'no-dsh') show('view-no-dsh')
+    else if (s.phase === 'error') {
+      show('view-error')
+      $('error-text').textContent = s.message || '服务启动失败。'
+    } else {
+      show('view-restarting')
+      $('restart-status').textContent = s.message || '正在启动 DeepSeek Harness 服务…'
+    }
+  }
+
+  window.auroraShell?.getState().then(render)
+  window.auroraShell?.onState(render)
+  // 轮询兜底：push 事件可能早于页面脚本注册丢失（启动竞态）
+  setInterval(() => {
+    window.auroraShell?.getState().then(render)
+  }, 800)
+  $('btn-retry').addEventListener('click', () => window.auroraShell.retryDsh())
+  $('btn-retry2').addEventListener('click', () => window.auroraShell.retryDsh())
+  $('btn-guide').addEventListener('click', () => window.auroraShell.openInstallGuide())
+</script>
+</body>
+</html>

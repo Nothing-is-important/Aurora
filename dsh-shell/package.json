@@ -1,0 +1,14 @@
+{
+  "name": "aurora-dsh",
+  "productName": "Aurora DSH",
+  "version": "0.1.1",
+  "private": true,
+  "type": "module",
+  "main": "main.mjs",
+  "description": "Aurora DSH — DeepSeek Harness 本地客户端外壳（Electron 包裹 dsh web）",
+  "scripts": {
+    "start": "electron .",
+    "smoke": "node smoke.mjs",
+    "make-icon": "electron scripts/make-icon.mjs"
+  }
+}

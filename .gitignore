@@ -18,3 +18,9 @@ smoke-out*.txt
 poc-dsh/.home/
 poc-run.log
 poc-dsh/.home-fresh/
+
+# dsh-shell 运行时与冒烟产物
+dsh-shell/.dsh-runtime/
+dsh-shell/.smoke-userdata*/
+dsh-shell/smoke-full.log
+dsh-shell/smoke-screenshot.png
