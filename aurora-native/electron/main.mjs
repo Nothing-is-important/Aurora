@@ -18,6 +18,8 @@ let win = null
 let ctx = null
 let quitting = false
 let bootUrl = null
+let activeDshHome = null
+let panelAgentHandle = null
 
 function mintSessionId() {
   return `aurora-${randomUUID()}`
@@ -104,6 +106,23 @@ function stopAgent(sessionId) {
   if (agent) agent.cancel({ kind: 'user' })
 }
 
+/** 面板操作代理：优先复用根 agent；无则惰性创建（重启后缓存自动失效） */
+async function ensurePanelAgent() {
+  if (panelAgentHandle) return panelAgentHandle
+  const c = engine()
+  const root = c.agents.roots()[0]
+  if (root) {
+    panelAgentHandle = { agent: root, dispose: async () => {} }
+    return panelAgentHandle
+  }
+  const handle = await c.agents.create({
+    sessionId: `aurora-panel-${randomUUID()}`,
+    meta: { cwd: app.getPath('documents') },
+  })
+  panelAgentHandle = handle
+  return handle
+}
+
 /** 编辑/重新生成：以 boundarySeq 为界的稳定前缀开分叉，发送新文本 */
 async function forkChat(sessionId, boundarySeq, text) {
   const c = engine()
@@ -144,6 +163,9 @@ ipcMain.handle('app:settings:set', async (_e, patch) => {
     try {
       const booted = await bootEngine(newHome)
       ctx = booted.ctx
+      bootUrl = booted.url
+      activeDshHome = newHome
+      panelAgentHandle = null
       if (sessionEventsOff) sessionEventsOff()
       sessionEventsOff = registerSessionEvents()
       return { restarted: true }
@@ -303,6 +325,74 @@ function registerBridge() {
     await engine().credentials.unset(ref)
     return true
   })
+  // MCP：组合级配置（home/cordis.patch.yml）+ 应用时重启引擎
+  ipcMain.handle('mcp:get', () => {
+    const file = join(activeDshHome ?? '', 'cordis.patch.yml')
+    try {
+      return existsSync(file) ? readFileSync(file, 'utf8') : ''
+    } catch {
+      return ''
+    }
+  })
+  ipcMain.handle('mcp:set', async (_e, yamlText) => {
+    const file = join(activeDshHome ?? '', 'cordis.patch.yml')
+    try {
+      writeFileSync(file, String(yamlText), 'utf8')
+      await disposeEngine().catch(() => {})
+      ctx = null
+      panelAgentHandle = null
+      const booted = await bootEngine(activeDshHome)
+      ctx = booted.ctx
+      bootUrl = booted.url
+      if (sessionEventsOff) sessionEventsOff()
+      sessionEventsOff = registerSessionEvents()
+      return { restarted: true }
+    } catch (err) {
+      return { restarted: false, error: err?.message ?? String(err) }
+    }
+  })
+  // 动态插件（引擎 dynamicCordisRunner，面板即用户：审批自动通过）
+  ipcMain.handle('plugins:list', () => {
+    try {
+      const inv = engine().dynamicCordisRunner.inventory() ?? []
+      return inv.map((r) => ({
+        pluginId: r.pluginId,
+        name: r.name,
+        status: r.status,
+        currentPackageId: r.currentPackageId,
+        nextPackageId: r.nextPackageId,
+      }))
+    } catch (err) {
+      return { error: err?.message ?? String(err) }
+    }
+  })
+  ipcMain.handle('plugins:define', async (_e, req) => {
+    const { agent } = await ensurePanelAgent()
+    // 动态插件归会话所有：定义必须携带面板代理的 sessionId
+    const receipt = engine().dynamicCordisRunner.define({ ...req, sessionId: agent.session.id })
+    return { pluginId: receipt.pluginId, packageId: receipt.packageId }
+  })
+  ipcMain.handle('plugins:run', async (_e, pluginId, packageId) => {
+    const { agent } = await ensurePanelAgent()
+    const r = await engine().dynamicCordisRunner.run(agent, pluginId, packageId, 'run')
+    if (r?.requestId && r?.status === 'awaiting-approval') {
+      await engine().dynamicCordisRunner.resolveRequestRun(r.requestId, { approved: true })
+    }
+    return {
+      status: r?.status,
+      requestId: r?.requestId,
+      pluginRunId: r?.pluginRunId,
+      error: r?.error,
+    }
+  })
+  ipcMain.handle('plugins:stop', async (_e, pluginId) => {
+    const { agent } = await ensurePanelAgent()
+    return engine().dynamicCordisRunner.stop(agent, pluginId)
+  })
+  ipcMain.handle('plugins:undefine', async (_e, pluginId) => {
+    const { agent } = await ensurePanelAgent()
+    return engine().dynamicCordisRunner.undefine(agent, pluginId)
+  })
   ipcMain.on('win:minimize', () => win?.minimize())
   ipcMain.on('win:toggle-maximize', () => {
     if (!win) return
@@ -362,6 +452,7 @@ app.whenReady().then(async () => {
       appSettings = {}
     }
     const dshHome = (appSettings.dshHome && String(appSettings.dshHome).trim()) || join(app.getPath('userData'), 'dsh-home')
+    activeDshHome = dshHome
     mkdirSync(dshHome, { recursive: true })
     const booted = await bootEngine(dshHome)
     ctx = booted.ctx
@@ -483,6 +574,53 @@ async function runSmoke() {
       { lastSeq, child: fork2.sessionId },
     )
 
+    // MCP 配置文件往返（写回后重启引擎）
+    const patchFile = join(activeDshHome ?? '', 'cordis.patch.yml')
+    const beforePatch = existsSync(patchFile) ? readFileSync(patchFile, 'utf8') : ''
+    writeFileSync(patchFile, '# aurora smoke\n[]\n', 'utf8')
+    await disposeEngine().catch(() => {})
+    ctx = null
+    panelAgentHandle = null
+    const rebooted = await bootEngine(activeDshHome)
+    ctx = rebooted.ctx
+    bootUrl = rebooted.url
+    if (sessionEventsOff) sessionEventsOff()
+    sessionEventsOff = registerSessionEvents()
+    ok('mcpConfigRoundtrip', !!ctx && readFileSync(patchFile, 'utf8').includes('aurora smoke'), 'engine rebooted with patch')
+    writeFileSync(patchFile, beforePatch, 'utf8')
+
+    // 动态插件：面板代理 → 定义（携带 sessionId）→ 运行（自动审批）→ 清单 → 停止 → 删除
+    const { agent } = await ensurePanelAgent()
+    const receipt = engine().dynamicCordisRunner.define({
+      plugin: { kind: 'new', idPrefix: 'ausmk' },
+      name: 'Aurora Smoke Plugin',
+      purpose: '冒烟：动态插件全流程',
+      sessionId: agent.session.id,
+      code: {
+        host: `const meta = { name: 'smoke', version: '1.0.0', description: 'smoke' }\nfunction apply(ctx) { ctx.on('session/created', () => {}) }\nreturn { meta, apply }\n`,
+      },
+    })
+    ok('pluginDefined', !!receipt?.pluginId && !!receipt?.packageId, receipt)
+    let runResult = null
+    if (receipt?.pluginId) {
+      try {
+        runResult = await engine().dynamicCordisRunner.run(agent, receipt.pluginId, receipt.packageId, 'run')
+      } catch (err) {
+        runResult = { thrown: err?.message ?? String(err) }
+      }
+      if (runResult?.requestId && runResult?.status === 'awaiting-approval') {
+        await engine().dynamicCordisRunner.resolveRequestRun(runResult.requestId, { approved: true })
+      }
+      ok('pluginRan', runResult?.status !== undefined && runResult?.status !== 'failed', JSON.stringify(runResult)?.slice(0, 300))
+      const inv = engine().dynamicCordisRunner.inventory() ?? []
+      ok('pluginListed', inv.some((r) => r.pluginId === receipt.pluginId), inv.map((r) => r.pluginId))
+      await engine().dynamicCordisRunner.stop(agent, receipt.pluginId)
+      ok('pluginStopped', true, 'stopped')
+      const un = await engine().dynamicCordisRunner.undefine(agent, receipt.pluginId)
+      const inv2 = engine().dynamicCordisRunner.inventory() ?? []
+      ok('pluginUndefined', !inv2.some((r) => r.pluginId === receipt.pluginId), { un, left: inv2.map((r) => r.pluginId) })
+    }
+
     // 渲染层加载
     await sleep(3000)
     ok('windowLoaded', win && win.webContents.getURL().length > 0, win?.webContents.getURL())
@@ -506,6 +644,8 @@ async function runSmoke() {
         out.modelOptions = document.querySelectorAll('[data-model-option]').length
         out.dshHomeInput = !!document.querySelector('[data-dsh-home]')
         out.discoverBtns = document.querySelectorAll('[data-discover]').length
+        out.mcpYaml = !!document.querySelector('[data-mcp-yaml]')
+        out.pluginCode = !!document.querySelector('[data-plugin-code]')
         // 单击第二个模型选项（一次点击）——回归「需要点两次」的 bug
         const chips = Array.from(document.querySelectorAll('[data-model-option]'))
         if (chips.length >= 2) {
@@ -542,6 +682,8 @@ async function runSmoke() {
         uiFlow.modelOptions >= 2 &&
         uiFlow.dshHomeInput === true &&
         uiFlow.discoverBtns >= 1 &&
+        uiFlow.mcpYaml === true &&
+        uiFlow.pluginCode === true &&
         uiFlow.settingsClosed === true &&
         uiFlow.modelPill === true &&
         singleClickOk === true,
@@ -585,7 +727,6 @@ async function runSmoke() {
 
     const img = await win.webContents.capturePage()
     const shot = join(app.getPath('userData'), 'smoke-screenshot.png')
-    const { writeFileSync } = await import('node:fs')
     writeFileSync(shot, img.toPNG())
     ok('screenshotTaken', img.getSize().width > 0 && img.getSize().height > 0, shot)
   } catch (err) {

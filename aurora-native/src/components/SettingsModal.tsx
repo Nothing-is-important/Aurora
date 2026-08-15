@@ -1,6 +1,42 @@
 import { useEffect, useState } from 'react'
-import { X, KeyRound, Check, Loader2, FolderOpen, Cpu, Gauge } from 'lucide-react'
-import type { LlmState, LlmProviderInfo } from '../types'
+import {
+  X,
+  KeyRound,
+  Check,
+  Loader2,
+  FolderOpen,
+  Cpu,
+  Gauge,
+  Boxes,
+  Play,
+  Square,
+  Trash2,
+  PlugZap,
+} from 'lucide-react'
+import type { LlmState, LlmProviderInfo, PluginRow } from '../types'
+
+const PLUGIN_TEMPLATE = `// Aurora 动态插件：返回 { meta, apply }
+const meta = {
+  name: '我的插件',
+  version: '1.0.0',
+  description: '插件功能简介',
+}
+function apply(ctx) {
+  const tool = harness.defineTool({
+    name: 'my_tool',
+    description: '工具功能说明（模型会据此决定何时调用）',
+    parameters: {
+      type: 'object',
+      properties: { input: { type: 'string', description: '输入参数' } },
+      required: ['input'],
+    },
+    output: { schema: { type: 'string' }, render: (args, value) => value },
+    execute: async (args) => \`处理结果：\${args.input}\`,
+  })
+  harness.registerTool(ctx, tool)
+}
+return { meta, apply }
+`
 
 interface Props {
   open: boolean
@@ -18,6 +54,23 @@ export default function SettingsModal({ open, onClose, onEngineRestarted }: Prop
   const [discoverMsg, setDiscoverMsg] = useState<Record<string, string>>({})
   const [homeBusy, setHomeBusy] = useState(false)
   const [homeMsg, setHomeMsg] = useState('')
+  const [mcpYaml, setMcpYaml] = useState('')
+  const [mcpBusy, setMcpBusy] = useState(false)
+  const [mcpMsg, setMcpMsg] = useState('')
+  const [pluginList, setPluginList] = useState<PluginRow[]>([])
+  const [pluginCode, setPluginCode] = useState('')
+  const [pluginMsg, setPluginMsg] = useState('')
+  const [pluginDefineBusy, setPluginDefineBusy] = useState(false)
+  const [pluginActionBusy, setPluginActionBusy] = useState<string | null>(null)
+
+  const refreshPlugins = async () => {
+    try {
+      const r = await window.aurora.plugins.list()
+      setPluginList(Array.isArray(r) ? r : [])
+    } catch (err) {
+      console.error('plugins:list failed', err)
+    }
+  }
 
   const refresh = async () => {
     try {
@@ -31,6 +84,8 @@ export default function SettingsModal({ open, onClose, onEngineRestarted }: Prop
     if (!open) return
     void refresh()
     void window.aurora.appSettings.get().then((s) => setDshHome(s.dshHome ?? ''))
+    void window.aurora.mcp.get().then(setMcpYaml)
+    void refreshPlugins()
   }, [open])
 
   if (!open) return null
@@ -118,6 +173,55 @@ export default function SettingsModal({ open, onClose, onEngineRestarted }: Prop
     } finally {
       setHomeBusy(false)
     }
+  }
+
+  const applyMcp = async () => {
+    setMcpBusy(true)
+    setMcpMsg('')
+    try {
+      const r = await window.aurora.mcp.set(mcpYaml)
+      if (r.restarted) {
+        setMcpMsg('已保存并重启引擎')
+        onEngineRestarted()
+      } else if (r.error) {
+        setMcpMsg(`失败：${r.error}`)
+      } else {
+        setMcpMsg('已保存')
+      }
+    } finally {
+      setMcpBusy(false)
+    }
+  }
+
+  const definePlugin = async () => {
+    if (!pluginCode.trim()) return
+    setPluginDefineBusy(true)
+    setPluginMsg('')
+    try {
+      const r = await window.aurora.plugins.define({
+        plugin: { kind: 'new', idPrefix: 'auplg' },
+        name: 'Aurora 插件',
+        purpose: 'Aurora 面板定义的动态插件',
+        code: { host: pluginCode },
+      })
+      setPluginMsg(`已定义：${r.pluginId} / ${r.packageId}（在列表中点击运行）`)
+      setPluginCode('')
+      await refreshPlugins()
+    } catch (err) {
+      setPluginMsg(`定义失败：${String(err)}`)
+    } finally {
+      setPluginDefineBusy(false)
+    }
+  }
+
+  const pluginAction = async (fn: () => Promise<unknown>) => {
+    setPluginMsg('')
+    try {
+      await fn()
+    } catch (err) {
+      setPluginMsg(`失败：${String(err)}`)
+    }
+    await refreshPlugins()
   }
 
   const field =
@@ -308,6 +412,124 @@ export default function SettingsModal({ open, onClose, onEngineRestarted }: Prop
               </button>
             </div>
             {homeMsg && <p className="mt-1.5 text-[11px] text-apple-green">{homeMsg}</p>}
+          </section>
+
+          {/* MCP 服务器（组合级配置：cordis.patch.yml） */}
+          <section>
+            <h3 className="mb-2 flex items-center gap-1.5 text-[12.5px] font-semibold text-black/70 dark:text-white/70">
+              <PlugZap size={13} strokeWidth={2.2} /> MCP 服务器
+            </h3>
+            <p className="mb-2 text-[11.5px] leading-relaxed text-black/40 dark:text-white/40">
+              按 DSH 组合配置编写 `cordis.patch.yml`（每个 MCP 服务器一行插件条目，如
+              `@deepseek-ai/dsh-mcp-client`）。保存后引擎自动重启生效。
+            </p>
+            <textarea
+              data-mcp-yaml
+              rows={5}
+              spellCheck={false}
+              value={mcpYaml}
+              onChange={(e) => setMcpYaml(e.target.value)}
+              placeholder={'# 例：\n# - id: mcp-servers\n#   name: @deepseek-ai/dsh-mcp-client\n#   config:\n#     command: npx\n#     args: ["-y", "@modelcontextprotocol/server-filesystem", "."]'}
+              className={`${field} resize-y font-mono text-[11.5px] leading-relaxed`}
+            />
+            <div className="mt-2 flex items-center gap-2">
+              <button
+                data-mcp-apply
+                disabled={mcpBusy}
+                onClick={() => void applyMcp()}
+                className="h-8 rounded-lg bg-apple-blue px-4 text-[12px] font-medium text-white transition-all hover:brightness-110 active:scale-95 disabled:opacity-60"
+              >
+                {mcpBusy ? <Loader2 size={12} className="animate-spin" /> : '保存并重启引擎'}
+              </button>
+              {mcpMsg && <span className="text-[11px] text-black/50 dark:text-white/50">{mcpMsg}</span>}
+            </div>
+          </section>
+
+          {/* 动态插件（引擎 dynamicCordisRunner） */}
+          <section>
+            <h3 className="mb-2 flex items-center gap-1.5 text-[12.5px] font-semibold text-black/70 dark:text-white/70">
+              <Boxes size={13} strokeWidth={2.2} /> 动态插件
+            </h3>
+            <p className="mb-2 text-[11.5px] leading-relaxed text-black/40 dark:text-white/40">
+              代码热定义 → 运行 → 停止，插件注册的工具并入 Agent 循环（引擎官方
+              dynamicCordisRunner；本地桌面环境审批自动通过）。
+            </p>
+            <div className="space-y-1.5">
+              {pluginList.map((p) => (
+                <div
+                  key={p.pluginId}
+                  data-plugin-row
+                  className="flex items-center gap-2 rounded-xl bg-black/[0.035] px-3 py-2 dark:bg-white/[0.05]"
+                >
+                  <Boxes size={12} strokeWidth={2} className="shrink-0 text-apple-blue" />
+                  <span className="min-w-0 flex-1 truncate text-[12px] font-medium text-black/75 dark:text-white/80">
+                    {p.name}
+                  </span>
+                  <span
+                    className={`shrink-0 rounded px-1.5 py-px text-[9.5px] ${
+                      p.status === 'running'
+                        ? 'bg-apple-green/15 text-apple-green'
+                        : 'bg-black/[0.05] text-black/40 dark:bg-white/[0.08] dark:text-white/40'
+                    }`}
+                  >
+                    {p.status ?? 'defined'}
+                  </span>
+                  <button
+                    data-plugin-run
+                    title="运行"
+                    disabled={pluginActionBusy === p.pluginId}
+                    onClick={() =>
+                      void pluginAction(() =>
+                        window.aurora.plugins.run(p.pluginId, p.currentPackageId ?? ''),
+                      )
+                    }
+                    className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-apple-green transition-colors hover:bg-apple-green/10"
+                  >
+                    <Play size={11} strokeWidth={2.4} />
+                  </button>
+                  <button
+                    data-plugin-stop
+                    title="停止"
+                    onClick={() =>
+                      void pluginAction(() => window.aurora.plugins.stop(p.pluginId))
+                    }
+                    className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-apple-orange transition-colors hover:bg-apple-orange/10"
+                  >
+                    <Square size={10} strokeWidth={2.4} />
+                  </button>
+                  <button
+                    data-plugin-remove
+                    title="删除"
+                    onClick={() =>
+                      void pluginAction(() => window.aurora.plugins.undefine(p.pluginId))
+                    }
+                    className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-black/35 transition-colors hover:bg-apple-red/10 hover:text-apple-red dark:text-white/35"
+                  >
+                    <Trash2 size={11} strokeWidth={2.2} />
+                  </button>
+                </div>
+              ))}
+            </div>
+            <textarea
+              data-plugin-code
+              rows={8}
+              spellCheck={false}
+              value={pluginCode}
+              onChange={(e) => setPluginCode(e.target.value)}
+              placeholder={PLUGIN_TEMPLATE}
+              className={`${field} mt-2 resize-y font-mono text-[11.5px] leading-relaxed`}
+            />
+            <div className="mt-2 flex items-center gap-2">
+              <button
+                data-plugin-define
+                disabled={pluginDefineBusy || !pluginCode.trim()}
+                onClick={() => void definePlugin()}
+                className="h-8 rounded-lg bg-apple-blue px-4 text-[12px] font-medium text-white transition-all hover:brightness-110 active:scale-95 disabled:opacity-60"
+              >
+                {pluginDefineBusy ? <Loader2 size={12} className="animate-spin" /> : '定义插件'}
+              </button>
+              {pluginMsg && <span className="text-[11px] text-black/50 dark:text-white/50">{pluginMsg}</span>}
+            </div>
           </section>
         </div>
       </div>

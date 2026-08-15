@@ -178,6 +178,54 @@ function download(filename: string, text: string) {
   setTimeout(() => URL.revokeObjectURL(url), 5000)
 }
 
+/** 从会话事件流折叠统计条（与官方 sessionStats 同口径的简化版） */
+function computeStats(events: SessionEventPayload[]) {
+  let turns = 0
+  let steps = 0
+  let llmMs = 0
+  let toolMs = 0
+  let stepStart = 0
+  const toolCalls = new Map<string, number>()
+  for (const e of events) {
+    switch (e.type) {
+      case 'turn/start':
+        turns++
+        break
+      case 'step/start':
+        steps++
+        stepStart = e.time
+        break
+      case 'assistant/message':
+        if (stepStart > 0) {
+          llmMs += e.time - stepStart
+          stepStart = 0
+        }
+        break
+      case 'tool/call':
+        toolCalls.set(String(e.data.callId ?? ''), e.time)
+        break
+      case 'tool/result': {
+        const msg = e.data.message as { callId?: string } | undefined
+        const t0 = toolCalls.get(String(msg?.callId ?? ''))
+        if (t0) toolMs += e.time - t0
+        break
+      }
+      default:
+        break
+    }
+  }
+  return { turns, steps, llmMs, toolMs }
+}
+
+function fmtMs(ms: number): string {
+  if (ms <= 0) return '0s'
+  if (ms < 1000) return `${ms}ms`
+  if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`
+  const m = Math.floor(ms / 60000)
+  const s = Math.round((ms % 60000) / 1000)
+  return `${m}m${s}s`
+}
+
 interface Props {
   messages: ChatMessage[]
   rawEvents: SessionEventPayload[]
@@ -491,7 +539,14 @@ export default function ChatArea({
         </div>
         <p className="mx-auto mt-1.5 flex max-w-3xl items-center gap-1 text-[10px] text-black/30 dark:text-white/30">
           <ChevronRight size={10} />
-          DeepSeek Harness 引擎 · 进程内运行 · Ctrl+K 命令面板 · Ctrl+N 新对话
+          <span data-stats>
+            {(() => {
+              const s = computeStats(rawEvents)
+              if (s.turns === 0 && s.steps === 0) return 'DeepSeek Harness 引擎 · 进程内运行'
+              return `${s.turns} 轮 · ${s.steps} 步 · LLM ${fmtMs(s.llmMs)} · 工具 ${fmtMs(s.toolMs)}`
+            })()}
+          </span>
+          <span className="ml-auto">Ctrl+K 命令面板 · Ctrl+N 新对话</span>
         </p>
       </div>
     </main>

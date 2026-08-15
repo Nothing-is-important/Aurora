@@ -1,5 +1,5 @@
 // DSH 引擎进程内嵌入：自定义 boot（跳过 HMR/watch，生产客户端不需要热重载）
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, writeFileSync, existsSync, readFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
 import { join } from 'node:path'
 
@@ -44,7 +44,15 @@ export async function bootEngine(home) {
     const profile = appBoot.loadProfile('dsh', 'web', installAnchor, home, { userLayer: true })
     writeFileSync(join(profile.dir, 'cordis.yml'), PROFILE_ROOT_CONFIG)
 
-    const homePatches = appBoot.loadOptionalPatches('dsh', join(home, 'cordis.patch.yml')) ?? []
+    const homePatchFile = join(home, 'cordis.patch.yml')
+    let homePatches = []
+    try {
+      if (existsSync(homePatchFile) && readFileSync(homePatchFile, 'utf8').trim()) {
+        homePatches = appBoot.loadOptionalPatches('dsh', homePatchFile) ?? []
+      }
+    } catch (err) {
+      console.warn('[engine] home patch parse failed (ignored):', err.message)
+    }
     const bundlePatches = profile.layers.flatMap((layer) => layer.patches)
     const rows = new Map()
     for (const row of appBoot.composeEntries([bundlePatches, profile.patches, homePatches, []])) {

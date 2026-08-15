@@ -81,6 +81,17 @@ declare global {
         get: () => Promise<{ dshHome: string }>
         set: (patch: { dshHome?: string }) => Promise<{ restarted: boolean; error?: string }>
       }
+      mcp: {
+        get: () => Promise<string>
+        set: (yamlText: string) => Promise<{ restarted: boolean; error?: string }>
+      }
+      plugins: {
+        list: () => Promise<PluginRow[]>
+        define: (req: PluginDefineRequest) => Promise<{ pluginId: string; packageId: string }>
+        run: (pluginId: string, packageId: string) => Promise<PluginRunResult>
+        stop: (pluginId: string) => Promise<unknown>
+        undefine: (pluginId: string) => Promise<unknown>
+      }
       window: {
         minimize: () => void
         toggleMaximize: () => void
@@ -119,4 +130,26 @@ export interface LlmDiscoverResult {
   models: LlmModelInfo[]
   elapsedMs: number
   source?: 'catalog' | 'endpoint'
+}
+
+export interface PluginRow {
+  pluginId: string
+  name: string
+  status?: string
+  currentPackageId?: string
+  nextPackageId?: string
+}
+
+export interface PluginDefineRequest {
+  plugin: { kind: 'new'; idPrefix: string } | { kind: 'existing'; pluginId: string }
+  name: string
+  purpose: string
+  code: { host?: string; client?: string }
+}
+
+export interface PluginRunResult {
+  status?: string
+  requestId?: string
+  pluginRunId?: string
+  error?: unknown
 }

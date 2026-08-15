@@ -30,6 +30,17 @@ contextBridge.exposeInMainWorld('aurora', {
     get: () => ipcRenderer.invoke('app:settings:get'),
     set: (patch) => ipcRenderer.invoke('app:settings:set', patch),
   },
+  mcp: {
+    get: () => ipcRenderer.invoke('mcp:get'),
+    set: (yamlText) => ipcRenderer.invoke('mcp:set', yamlText),
+  },
+  plugins: {
+    list: () => ipcRenderer.invoke('plugins:list'),
+    define: (req) => ipcRenderer.invoke('plugins:define', req),
+    run: (pluginId, packageId) => ipcRenderer.invoke('plugins:run', pluginId, packageId),
+    stop: (pluginId) => ipcRenderer.invoke('plugins:stop', pluginId),
+    undefine: (pluginId) => ipcRenderer.invoke('plugins:undefine', pluginId),
+  },
   window: {
     minimize: () => ipcRenderer.send('win:minimize'),
     toggleMaximize: () => ipcRenderer.send('win:toggle-maximize'),
