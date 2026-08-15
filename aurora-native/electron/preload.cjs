@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld('aurora', {
   chat: {
     send: (sessionId, text) => ipcRenderer.invoke('chat:send', sessionId, text),
     stop: (sessionId) => ipcRenderer.send('chat:stop', sessionId),
+    fork: (sessionId, boundarySeq, text) => ipcRenderer.invoke('chat:fork', sessionId, boundarySeq, text),
     onEvent: (cb) => {
       const listener = (_e, payload) => cb(payload)
       ipcRenderer.on('chat:event', listener)

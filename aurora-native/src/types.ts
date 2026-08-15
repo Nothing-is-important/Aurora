@@ -26,6 +26,8 @@ export interface ChatMessage {
   toolSteps: ToolStepInfo[]
   turn: number
   step: number
+  /** user 消息的日志序号（编辑/重新生成分叉时用） */
+  seq?: number
 }
 
 export interface SessionEventPayload {
@@ -58,6 +60,11 @@ declare global {
       chat: {
         send: (sessionId: string, text: string) => Promise<{ sessionId: string }>
         stop: (sessionId: string) => void
+        fork: (
+          sessionId: string,
+          boundarySeq: number,
+          text: string,
+        ) => Promise<{ sessionId: string }>
         onEvent: (cb: (p: { sessionId: string; event: SessionEventPayload }) => void) => () => void
       }
       llm: {

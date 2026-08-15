@@ -104,6 +104,22 @@ function stopAgent(sessionId) {
   if (agent) agent.cancel({ kind: 'user' })
 }
 
+/** 编辑/重新生成：以 boundarySeq 为界的稳定前缀开分叉，发送新文本 */
+async function forkChat(sessionId, boundarySeq, text) {
+  const c = engine()
+  const source = c.sessions.get(sessionId)
+  if (!source) throw new Error('source session not live')
+  const seed = boundarySeq >= 0 ? source.events.slice(0, boundarySeq + 1) : []
+  const childId = `aurora-${randomUUID()}`
+  const handle = await c.agents.create({
+    sessionId: childId,
+    seed,
+    meta: { cwd: app.getPath('documents'), parentSession: sessionId },
+  })
+  handle.agent.followup({ role: 'user', content: text })
+  return { sessionId: childId }
+}
+
 // ---------- Aurora 应用设置（userData/settings.json：DSH 数据目录等） ----------
 let appSettings = {}
 function saveAppSettings() {
@@ -266,6 +282,7 @@ function registerBridge() {
   ipcMain.handle('sessions:open', (_e, sessionId) => openSession(sessionId))
   ipcMain.handle('chat:send', (_e, sessionId, text) => sendMessage(sessionId, text))
   ipcMain.on('chat:stop', (_e, sessionId) => stopAgent(sessionId))
+  ipcMain.handle('chat:fork', (_e, sessionId, boundarySeq, text) => forkChat(sessionId, boundarySeq, text))
   ipcMain.handle('llm:state', () => llmState())
   ipcMain.handle('llm:select', async (_e, provider, model) => {
     // saveSelection 是异步持久化：必须等待提交完成再回读状态，
@@ -454,6 +471,18 @@ async function runSmoke() {
       { models: disc.models.map((m) => ({ id: m.id, ctx: m.contextWindow, max: m.maxTokens })), elapsedMs: disc.elapsedMs },
     )
 
+    // 分叉（编辑/重新生成的引擎通路）：空前缀分叉 + 完整历史分叉
+    const fork1 = await forkChat(sid, -1, '分支消息 A')
+    ok('forkEmptyPrefix', fork1.sessionId !== sid && !!engine().agents.get(fork1.sessionId), fork1)
+    const lastSeq = (engine().sessions.get(sid)?.events ?? []).length - 1
+    const fork2 = await forkChat(sid, lastSeq, '分支消息 B')
+    ok(
+      'forkFullHistory',
+      fork2.sessionId !== sid &&
+        (engine().sessions.get(fork2.sessionId)?.events ?? []).length >= lastSeq + 1,
+      { lastSeq, child: fork2.sessionId },
+    )
+
     // 渲染层加载
     await sleep(3000)
     ok('windowLoaded', win && win.webContents.getURL().length > 0, win?.webContents.getURL())
@@ -520,6 +549,39 @@ async function runSmoke() {
     )
     ok('singleClickSwitchesModel', singleClickOk, uiFlow.activeAfterOneClick)
     ok('modelMenuFiltersByKey', uiFlow.menuEmptyHint === true, { menuEmptyHint: uiFlow.menuEmptyHint })
+
+    // 命令面板 / 模板 / 编辑模式 UI 流
+    const uiFlow2 = await win.webContents
+      .executeJavaScript(`(async () => {
+        const out = {}
+        // Ctrl+K 打开命令面板
+        window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true, bubbles: true }))
+        await new Promise((r) => setTimeout(r, 400))
+        out.paletteOpen = !!document.querySelector('[data-command-palette]')
+        out.paletteItems = document.querySelectorAll('[data-palette-item]').length
+        window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+        await new Promise((r) => setTimeout(r, 300))
+        out.paletteClosed = !document.querySelector('[data-command-palette]')
+        // 模板菜单：点击一个模板 → 输入框被填充
+        document.querySelector('[data-templates]')?.click()
+        await new Promise((r) => setTimeout(r, 300))
+        out.templateCount = document.querySelectorAll('[data-template]').length
+        document.querySelectorAll('[data-template]')[0]?.click()
+        await new Promise((r) => setTimeout(r, 300))
+        out.inputFilled = (document.querySelector('textarea')?.value ?? '').length > 0
+        return out
+      })()`)
+      .catch((e) => ({ error: String(e) }))
+    ok(
+      'paletteWorks',
+      uiFlow2.paletteOpen === true && uiFlow2.paletteItems >= 3 && uiFlow2.paletteClosed === true,
+      uiFlow2,
+    )
+    ok(
+      'templatesWork',
+      uiFlow2.templateCount >= 5 && uiFlow2.inputFilled === true,
+      { templateCount: uiFlow2.templateCount, inputFilled: uiFlow2.inputFilled },
+    )
 
     const img = await win.webContents.capturePage()
     const shot = join(app.getPath('userData'), 'smoke-screenshot.png')

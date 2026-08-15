@@ -47,6 +47,7 @@ export function foldEvents(events: SessionEventPayload[]): ChatMessage[] {
           toolSteps: [],
           turn: (ev.data.turn as number) ?? 0,
           step: 0,
+          seq: ev.seq,
         })
         break
       }
@@ -117,6 +118,7 @@ export interface UseChatResult {
   sessions: SessionMeta[]
   sessionId: string | null
   messages: ChatMessage[]
+  rawEvents: SessionEventPayload[]
   streaming: boolean
   ready: boolean
   refreshSessions: () => Promise<void>
@@ -124,6 +126,7 @@ export interface UseChatResult {
   newChat: () => void
   send: (text: string) => Promise<void>
   stop: () => void
+  fork: (boundarySeq: number, text: string) => Promise<void>
 }
 
 export function useChat(): UseChatResult {
@@ -202,5 +205,34 @@ export function useChat(): UseChatResult {
     setStreaming(false)
   }, [])
 
-  return { sessions, sessionId, messages, streaming, ready, refreshSessions, openSession, newChat, send, stop }
+  /** 分叉：在 boundarySeq 之后开新分支并发送 text（编辑/重新生成共用） */
+  const fork = useCallback(
+    async (boundarySeq: number, text: string) => {
+      const sid = sessionRef.current
+      if (!sid) return
+      try {
+        const r = await window.aurora.chat.fork(sid, boundarySeq, text)
+        await openSession(r.sessionId)
+        await refreshSessions()
+      } catch (err) {
+        console.error('chat:fork failed', err)
+      }
+    },
+    [openSession, refreshSessions],
+  )
+
+  return {
+    sessions,
+    sessionId,
+    messages,
+    rawEvents,
+    streaming,
+    ready,
+    refreshSessions,
+    openSession,
+    newChat,
+    send,
+    stop,
+    fork,
+  }
 }
