@@ -44,7 +44,9 @@ let resolvedCache = null
 export function resolveDsh() {
   if (resolvedCache) return resolvedCache
   if (process.env.AURORA_DSH_BIN) {
-    resolvedCache = { cmd: process.env.AURORA_DSH_BIN, args: [], shell: false, source: 'env' }
+    // 支持完整命令行（如 "node.exe <path>/bin.js"），按空白拆分
+    const parts = process.env.AURORA_DSH_BIN.trim().split(/\s+/)
+    resolvedCache = { cmd: parts[0], args: parts.slice(1), shell: false, source: 'env' }
     return resolvedCache
   }
   const nodeExe = join('C:\\Program Files\\nodejs', 'node.exe')

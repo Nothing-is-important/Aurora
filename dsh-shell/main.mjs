@@ -2,7 +2,7 @@
 // 原生窗口/托盘/快捷键/通知包裹 `dsh web`（DeepSeek Harness 官方 Web 界面）。
 // 冒烟模式：SMOKE=1 时自动跑审计序列，打印 [SMOKE] report 并以 0/2 退出。
 import { app, BrowserWindow, Tray, Menu, nativeImage, ipcMain, globalShortcut, Notification, dialog, shell, screen } from 'electron'
-import { mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs'
+import { mkdirSync, writeFileSync, readFileSync, existsSync, appendFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { join } from 'node:path'
 import { DshManager, probeUrl } from './src/dsh-manager.mjs'
@@ -18,6 +18,25 @@ if (SMOKE) {
   // 冒烟用独立 userData：每次运行唯一目录（避免上一场景残留的 GPU/dsh
   // 进程持有句柄导致 EPERM），与真实用户数据完全隔离。
   app.setPath('userData', join(__dirname, `.smoke-userdata-${process.pid}-${Date.now()}`))
+  // 打包后的 GUI 进程无控制台：把日志镜像到文件供驱动断言
+  const smokeLogFile = join(app.getPath('userData'), 'smoke-app.log')
+  const mirror = (level) => (text) => {
+    try {
+      appendFileSync(smokeLogFile, `${new Date().toISOString()} ${level} ${text}\n`, 'utf8')
+    } catch {
+      /* 日志失败不影响审计 */
+    }
+  }
+  const origLog = console.log.bind(console)
+  const origErr = console.error.bind(console)
+  console.log = (text) => {
+    origLog(text)
+    mirror('LOG')(typeof text === 'string' ? text : JSON.stringify(text))
+  }
+  console.error = (text) => {
+    origErr(text)
+    mirror('ERR')(typeof text === 'string' ? text : JSON.stringify(text))
+  }
 }
 
 const MISSING_RE = /未检测到 dsh|ENOENT|spawn/i
