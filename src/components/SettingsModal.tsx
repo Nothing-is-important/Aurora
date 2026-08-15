@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import {
   BookOpen,
   Check,
+  ChevronDown,
   Eye,
   EyeOff,
   FolderPlus,
@@ -14,12 +15,15 @@ import {
   X,
 } from 'lucide-react'
 import type { ModelConfig, McpServerConfig, KbRow } from '../lib/ipc'
+import { loadCustomModes, saveCustomModes } from '../lib/modes'
+import type { ChatMode } from '../lib/modes'
 
 interface SettingsModalProps {
   open: boolean
   models: ModelConfig[]
   onClose: () => void
   onChanged: () => void
+  onModesChanged?: () => void
 }
 
 const PROVIDERS: { id: ModelConfig['provider']; label: string }[] = [
@@ -48,6 +52,7 @@ export default function SettingsModal({
   models,
   onClose,
   onChanged,
+  onModesChanged,
 }: SettingsModalProps) {
   const [selectedId, setSelectedId] = useState('')
   const [form, setForm] = useState<ModelConfig>(emptyModel())
@@ -57,6 +62,7 @@ export default function SettingsModal({
     ok: boolean
     message?: string
     models?: number | null
+    modelIds?: string[]
   } | null>(null)
   const [saving, setSaving] = useState(false)
   /** 未保存的新模型草稿（点击 + 后立即出现在左侧列表，带「未保存」徽标） */
@@ -74,6 +80,33 @@ export default function SettingsModal({
   const [mcpArgs, setMcpArgs] = useState('')
   const [kbList, setKbList] = useState<KbRow[]>([])
   const [appVersion, setAppVersion] = useState('')
+  const [customModes, setCustomModes] = useState<ChatMode[]>([])
+
+  const reloadCustomModes = async (): Promise<void> => {
+    setCustomModes(await loadCustomModes())
+    onModesChanged?.()
+  }
+
+  const updateModes = async (next: ChatMode[]): Promise<void> => {
+    await saveCustomModes(next)
+    setCustomModes(next)
+    onModesChanged?.()
+  }
+
+  const addMode = (): void => {
+    const m: ChatMode = {
+      id: `mode-${Date.now().toString(36)}`,
+      name: '新模式',
+      desc: '',
+      systemPrompt: '',
+      toolsEnabled: false,
+    }
+    void updateModes([...customModes, m])
+  }
+
+  const patchMode = (id: string, patch: Partial<ChatMode>): void => {
+    void updateModes(customModes.map((m) => (m.id === id ? { ...m, ...patch } : m)))
+  }
 
   useEffect(() => {
     void window.aurora.app.getVersion().then(setAppVersion)
@@ -115,6 +148,7 @@ export default function SettingsModal({
       })
       loadMcp()
       loadKb()
+      void reloadCustomModes()
     }
   }, [open])
 
@@ -260,6 +294,36 @@ export default function SettingsModal({
     const r = await window.aurora.models.test(form)
     setTestResult(r)
     setTesting(false)
+  }
+
+  /** 一键添加端点返回的模型（ccswitch 式自动获取） */
+  const addFetchedModel = async (modelId: string): Promise<void> => {
+    await window.aurora.models.save({
+      ...form,
+      id: modelId,
+      name: modelId,
+      enabled: true,
+    })
+    onChanged()
+    setTestResult((prev) =>
+      prev
+        ? { ...prev, modelIds: (prev.modelIds ?? []).filter((x) => x !== modelId) }
+        : prev,
+    )
+  }
+
+  const addAllFetched = async (): Promise<void> => {
+    const ids = testResult?.modelIds ?? []
+    for (const id of ids) {
+      await window.aurora.models.save({
+        ...form,
+        id,
+        name: id,
+        enabled: true,
+      })
+    }
+    onChanged()
+    setTestResult((prev) => (prev ? { ...prev, modelIds: [] } : prev))
   }
 
   const field =
@@ -635,6 +699,82 @@ export default function SettingsModal({
                 </div>
               </div>
 
+              <div>
+                <div className="flex items-center justify-between">
+                  <label className={label}>自定义模式（对话区顶部切换）</label>
+                  <button
+                    data-mode-add
+                    onClick={addMode}
+                    title="添加模式"
+                    className="flex h-6 w-6 items-center justify-center rounded-md text-black/45 transition-colors hover:bg-black/[0.06] hover:text-apple-blue dark:text-white/45 dark:hover:bg-white/[0.08]"
+                  >
+                    <Plus size={13} strokeWidth={2.4} />
+                  </button>
+                </div>
+                <div className="space-y-1.5">
+                  {customModes.length === 0 && (
+                    <p className="rounded-lg bg-black/[0.03] px-3 py-2.5 text-[11.5px] text-black/40 dark:bg-white/[0.05] dark:text-white/40">
+                      暂无自定义模式。内置模式（普通对话/编程助手/写作助手/Agent 完整模式）已可用；点右上角 + 创建自己的模式。
+                    </p>
+                  )}
+                  {customModes.map((m) => (
+                    <div
+                      key={m.id}
+                      data-custom-mode
+                      className="rounded-xl bg-black/[0.035] px-3 py-2 dark:bg-white/[0.05]"
+                    >
+                      <div className="flex items-center gap-2">
+                        <input
+                          className="min-w-0 flex-1 rounded-md bg-transparent text-[12.5px] font-medium text-black/75 outline-none dark:text-white/80"
+                          value={m.name}
+                          onChange={(e) => patchMode(m.id, { name: e.target.value })}
+                        />
+                        <span
+                          onClick={() =>
+                            patchMode(m.id, { toolsEnabled: !m.toolsEnabled })
+                          }
+                          title="是否启用工具"
+                          className={`shrink-0 cursor-pointer rounded-full transition-colors duration-200 ${
+                            m.toolsEnabled ? 'bg-apple-green' : 'bg-black/20 dark:bg-white/20'
+                          }`}
+                          style={{ height: 18, width: 32 }}
+                        >
+                          <span
+                            className="block rounded-full bg-white shadow-soft transition-all duration-200"
+                            style={{
+                              height: 14,
+                              width: 14,
+                              marginTop: 2,
+                              marginLeft: m.toolsEnabled ? 15 : 2,
+                            }}
+                          />
+                        </span>
+                        <span className="shrink-0 text-[10.5px] text-black/35 dark:text-white/35">
+                          {m.toolsEnabled ? '工具开' : '工具关'}
+                        </span>
+                        <button
+                          onClick={() =>
+                            void updateModes(customModes.filter((x) => x.id !== m.id))
+                          }
+                          className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-black/35 transition-colors hover:bg-apple-red/10 hover:text-apple-red dark:text-white/35"
+                        >
+                          <Trash2 size={12} strokeWidth={2.2} />
+                        </button>
+                      </div>
+                      <textarea
+                        rows={2}
+                        className="mt-1.5 w-full resize-y rounded-lg bg-black/[0.04] px-2 py-1.5 font-mono text-[11.5px] leading-relaxed text-black/65 outline-none dark:bg-white/[0.06] dark:text-white/70"
+                        placeholder="该模式的系统提示词（留空则不注入）"
+                        value={m.systemPrompt}
+                        onChange={(e) =>
+                          patchMode(m.id, { systemPrompt: e.target.value })
+                        }
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className={label}>显示名称</label>
@@ -711,47 +851,60 @@ export default function SettingsModal({
                 </>
               )}
 
-              <div className="grid grid-cols-3 gap-3">
-                <div>
-                  <label className={label}>Temperature</label>
-                  <input
-                    className={field}
-                    type="number"
-                    min={0}
-                    max={2}
-                    step={0.1}
-                    value={form.temperature}
-                    onChange={(e) =>
-                      setForm({ ...form, temperature: Number(e.target.value) })
-                    }
+              <details className="group/adv rounded-xl bg-black/[0.03] px-3 py-2 dark:bg-white/[0.04]">
+                <summary className="flex cursor-pointer list-none items-center text-[12px] font-medium text-black/50 outline-none [&::-webkit-details-marker]:hidden dark:text-white/50">
+                  <ChevronDown
+                    size={13}
+                    strokeWidth={2.2}
+                    className="mr-1 transition-transform duration-200 group-open/adv:rotate-180"
                   />
+                  高级设置
+                  <span className="ml-2 text-[10.5px] font-normal text-black/30 dark:text-white/30">
+                    Temperature · Max Tokens · Top P（默认即可，一般无需修改）
+                  </span>
+                </summary>
+                <div className="mt-2 grid grid-cols-3 gap-3">
+                  <div>
+                    <label className={label}>Temperature</label>
+                    <input
+                      className={field}
+                      type="number"
+                      min={0}
+                      max={2}
+                      step={0.1}
+                      value={form.temperature}
+                      onChange={(e) =>
+                        setForm({ ...form, temperature: Number(e.target.value) })
+                      }
+                    />
+                  </div>
+                  <div>
+                    <label className={label}>Max Tokens</label>
+                    <input
+                      className={field}
+                      type="number"
+                      min={1}
+                      step={256}
+                      value={form.maxTokens}
+                      onChange={(e) =>
+                        setForm({ ...form, maxTokens: Number(e.target.value) })
+                      }
+                    />
+                  </div>
+                  <div>
+                    <label className={label}>Top P</label>
+                    <input
+                      className={field}
+                      type="number"
+                      min={0}
+                      max={1}
+                      step={0.05}
+                      value={form.topP}
+                      onChange={(e) => setForm({ ...form, topP: Number(e.target.value) })}
+                    />
+                  </div>
                 </div>
-                <div>
-                  <label className={label}>Max Tokens</label>
-                  <input
-                    className={field}
-                    type="number"
-                    min={1}
-                    step={256}
-                    value={form.maxTokens}
-                    onChange={(e) =>
-                      setForm({ ...form, maxTokens: Number(e.target.value) })
-                    }
-                  />
-                </div>
-                <div>
-                  <label className={label}>Top P</label>
-                  <input
-                    className={field}
-                    type="number"
-                    min={0}
-                    max={1}
-                    step={0.05}
-                    value={form.topP}
-                    onChange={(e) => setForm({ ...form, topP: Number(e.target.value) })}
-                  />
-                </div>
-              </div>
+              </details>
 
               <label className="flex cursor-pointer items-center gap-2.5">
                 <span
@@ -783,6 +936,41 @@ export default function SettingsModal({
                   {testResult.ok
                     ? `连接成功${testResult.models != null ? `，端点提供 ${testResult.models} 个模型` : ''}`
                     : `连接失败：${testResult.message ?? '未知错误'}`}
+                </div>
+              )}
+
+              {/* 自动获取的模型列表（ccswitch 式一键添加） */}
+              {testResult?.ok && (testResult.modelIds?.length ?? 0) > 0 && (
+                <div
+                  data-fetched-models
+                  className="rounded-xl border border-black/[0.07] p-2.5 dark:border-white/[0.09]"
+                >
+                  <div className="flex items-center justify-between px-1 pb-1.5">
+                    <span className="text-[11px] font-semibold uppercase tracking-wider text-black/35 dark:text-white/30">
+                      可用模型（点击添加）
+                    </span>
+                    <button
+                      onClick={() => void addAllFetched()}
+                      className="rounded-md bg-apple-blue/10 px-2 py-0.5 text-[11px] font-medium text-apple-blue transition-colors hover:bg-apple-blue/20"
+                    >
+                      全部添加
+                    </button>
+                  </div>
+                  <div className="max-h-36 space-y-0.5 overflow-y-auto">
+                    {(testResult.modelIds ?? []).map((id) => (
+                      <button
+                        key={id}
+                        data-fetched-model
+                        onClick={() => void addFetchedModel(id)}
+                        className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-black/[0.04] dark:hover:bg-white/[0.06]"
+                      >
+                        <Plus size={11} strokeWidth={2.4} className="shrink-0 text-apple-blue" />
+                        <span className="min-w-0 flex-1 truncate font-mono text-[11.5px] text-black/70 dark:text-white/75">
+                          {id}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
                 </div>
               )}
 

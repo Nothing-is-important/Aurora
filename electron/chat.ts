@@ -16,6 +16,7 @@ export interface ChatStartRequest {
   requestId: string
   modelId: string
   messages: { role: string; content: unknown }[]
+  toolsEnabled?: boolean
 }
 
 export interface ChatUsage {
@@ -126,7 +127,10 @@ async function runChat(
         role: m.role,
         content: m.content as string | unknown[] | null,
       }))
-      const tools = [...TOOL_DEFS, ...mcpManager.getToolDefs()]
+      const tools =
+        req.toolsEnabled === false
+          ? []
+          : [...TOOL_DEFS, ...mcpManager.getToolDefs()]
       for (let round = 0; round < MAX_ROUNDS; round++) {
         const outcome =
           model.provider === 'mock'

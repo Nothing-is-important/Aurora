@@ -411,6 +411,7 @@ function AppInner() {
         models={chat.models}
         onClose={() => setSettingsOpen(false)}
         onChanged={() => void chat.reloadModels()}
+        onModesChanged={() => void chat.reloadModes()}
       />
 
       <CommandPalette

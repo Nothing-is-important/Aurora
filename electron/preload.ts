@@ -81,6 +81,7 @@ export interface ConnectionTestResult {
   ok: boolean
   message?: string
   models?: number | null
+  modelIds?: string[]
 }
 
 export interface McpServerConfig {
@@ -194,6 +195,7 @@ const api = {
   app: {
     getVersion: (): Promise<string> => ipcRenderer.invoke('app:getVersion'),
     openDataDir: (): Promise<boolean> => ipcRenderer.invoke('app:openDataDir'),
+    quit: (): void => ipcRenderer.send('app:quit'),
   },
   mcp: {
     configure: (

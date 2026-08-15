@@ -10,6 +10,7 @@ import {
   Copy,
   ExternalLink,
   FileText,
+  Layers,
   Lightbulb,
   Loader2,
   Paperclip,
@@ -261,6 +262,9 @@ export default function ChatArea({ chat, settingsOpen, onSmokePhase2Done }: Chat
     models,
     modelId,
     setModelId,
+    modes,
+    modeId,
+    setMode,
     streamingId,
     send,
     stop,
@@ -269,6 +273,7 @@ export default function ChatArea({ chat, settingsOpen, onSmokePhase2Done }: Chat
   } = chat
   const [input, setInput] = useState('')
   const [menuOpen, setMenuOpen] = useState(false)
+  const [modeMenuOpen, setModeMenuOpen] = useState(false)
   const [attachments, setAttachments] = useState<PickedFile[]>([])
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editDraft, setEditDraft] = useState('')
@@ -277,11 +282,13 @@ export default function ChatArea({ chat, settingsOpen, onSmokePhase2Done }: Chat
   const [customTemplates, setCustomTemplates] = useState<PromptTemplate[]>([])
   const [promptToast, setPromptToast] = useState<string | null>(null)
   const promptMenuRef = useRef<HTMLDivElement>(null)
+  const modeMenuRef = useRef<HTMLDivElement>(null)
   const taRef = useRef<HTMLTextAreaElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
 
   const activeModel = models.find((m) => m.id === modelId)
+  const activeMode = modes.find((m) => m.id === modeId)
   const isStreaming = streamingId !== null
   const pricing = pricingFor(activeModel)
   const ctxTokens = estimateTokens(messages)
@@ -294,15 +301,20 @@ export default function ChatArea({ chat, settingsOpen, onSmokePhase2Done }: Chat
   }, [messages])
 
   useEffect(() => {
-    if (!menuOpen) return
+    if (!menuOpen && !modeMenuOpen) return
     const onDown = (e: MouseEvent): void => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+      if (
+        menuRef.current &&
+        !menuRef.current.contains(e.target as Node) &&
+        !(modeMenuRef.current && modeMenuRef.current.contains(e.target as Node))
+      ) {
         setMenuOpen(false)
+        setModeMenuOpen(false)
       }
     }
     document.addEventListener('mousedown', onDown)
     return () => document.removeEventListener('mousedown', onDown)
-  }, [menuOpen])
+  }, [menuOpen, modeMenuOpen])
 
   useEffect(() => {
     void loadCustomTemplates().then(setCustomTemplates)
@@ -408,8 +420,78 @@ export default function ChatArea({ chat, settingsOpen, onSmokePhase2Done }: Chat
 
   return (
     <main className="relative z-10 flex min-w-0 flex-1 flex-col">
-      {/* 顶部模型选择 */}
-      <div className="relative flex justify-center pt-2.5" ref={menuRef}>
+      {/* 顶部模式与模型选择 */}
+      <div className="relative flex items-center justify-center gap-2 pt-2.5" ref={menuRef}>
+        <button
+          data-mode-pill
+          onClick={() => setModeMenuOpen((v) => !v)}
+          className="glass-strong flex h-8 items-center gap-1.5 rounded-full px-3.5 text-[12.5px] font-medium text-black/70 shadow-soft transition-transform duration-200 ease-spring hover:scale-[1.03] active:scale-[0.97] dark:text-white/75"
+        >
+          <Layers size={13} strokeWidth={2.2} className="text-apple-purple" />
+          {activeMode?.name ?? '普通对话'}
+          <ChevronDown
+            size={13}
+            strokeWidth={2.2}
+            className="text-black/40 dark:text-white/40"
+          />
+        </button>
+
+        {modeMenuOpen && (
+          <div
+            ref={modeMenuRef}
+            data-mode-menu
+            className="glass-strong animate-scaleIn absolute top-11 z-30 w-72 origin-top rounded-2xl p-1.5 shadow-glass"
+          >
+            {modes.map((m) => (
+              <button
+                key={m.id}
+                data-mode-item
+                onClick={() => {
+                  setMode(m.id)
+                  setModeMenuOpen(false)
+                  if (m.recommendModelId) {
+                    const rec = models.find(
+                      (x) => x.modelId === m.recommendModelId,
+                    )
+                    if (rec) setModelId(rec.id)
+                  }
+                }}
+                className={`flex w-full items-start gap-2.5 rounded-xl px-3 py-2.5 text-left transition-colors ${
+                  m.id === modeId
+                    ? 'bg-apple-purple/10 dark:bg-apple-purple/20'
+                    : 'hover:bg-black/[0.04] dark:hover:bg-white/[0.06]'
+                }`}
+              >
+                <Layers
+                  size={14}
+                  strokeWidth={2}
+                  className={`mt-0.5 shrink-0 ${
+                    m.id === modeId
+                      ? 'text-apple-purple'
+                      : 'text-black/40 dark:text-white/40'
+                  }`}
+                />
+                <span className="min-w-0 flex-1">
+                  <span className="block text-[13px] font-medium text-black/80 dark:text-white/85">
+                    {m.name}
+                  </span>
+                  <span className="block text-[11px] leading-snug text-black/40 dark:text-white/40">
+                    {m.desc}
+                    {m.toolsEnabled ? ' · 可用工具' : ''}
+                  </span>
+                </span>
+                {m.id === modeId && (
+                  <Check
+                    size={13}
+                    strokeWidth={2.6}
+                    className="mt-0.5 shrink-0 text-apple-purple"
+                  />
+                )}
+              </button>
+            ))}
+          </div>
+        )}
+
         <button
           data-model-pill
           onClick={() => setMenuOpen((v) => !v)}

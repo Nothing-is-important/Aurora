@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ChatUsage, ModelConfig, PickedFile, ToolStep } from './ipc'
+import {
+  BUILTIN_MODES,
+  loadActiveModeId,
+  loadCustomModes,
+  saveActiveModeId,
+} from './modes'
+import type { ChatMode } from './modes'
 
 export interface ChatMessage {
   id: string
@@ -23,6 +30,10 @@ export interface ChatController {
   modelId: string
   setModelId: (id: string) => void
   reloadModels: () => Promise<void>
+  modes: ChatMode[]
+  modeId: string
+  setMode: (id: string) => void
+  reloadModes: () => Promise<void>
   streamingId: string | null
   send: (text: string, forceModelId?: string, attachments?: PickedFile[]) => void
   stop: () => void
@@ -56,8 +67,12 @@ export function useChat(opts: UseChatOptions): ChatController {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [models, setModels] = useState<ModelConfig[]>([])
   const [modelId, setModelIdState] = useState('')
+  const [modes, setModes] = useState<ChatMode[]>(BUILTIN_MODES)
+  const [modeId, setModeIdState] = useState('chat')
   const [streamingId, setStreamingId] = useState<string | null>(null)
   const streamingRef = useRef<string | null>(null)
+  const modeIdRef = useRef('chat')
+  modeIdRef.current = modeId
   const convIdRef = useRef<string | null>(opts.conversationId)
   convIdRef.current = opts.conversationId
   const flushTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>())
@@ -213,6 +228,22 @@ export function useChat(opts: UseChatOptions): ChatController {
     setModels(list)
   }, [])
 
+  const reloadModes = useCallback(async () => {
+    const custom = await loadCustomModes()
+    setModes([...BUILTIN_MODES, ...custom])
+  }, [])
+
+  // 加载模式（内置 + 自定义 + 上次选中的模式）
+  useEffect(() => {
+    void loadActiveModeId().then((id) => setModeIdState(id))
+    void reloadModes()
+  }, [reloadModes])
+
+  const setMode = useCallback((id: string) => {
+    setModeIdState(id)
+    void saveActiveModeId(id)
+  }, [])
+
   const loadConversation = useCallback(
     async (conversationId: string) => {
       const gen = ++loadGenRef.current
@@ -273,13 +304,15 @@ export function useChat(opts: UseChatOptions): ChatController {
           .filter((m) => m.status !== 'error' && m.content !== '')
           .map((m) => ({ role: m.role, content: m.content }))
 
-        // 系统提示词注入：会话级优先，其次全局
+        // 系统提示词注入：会话级 > 当前模式 > 全局
         const convSys = convId
           ? ((await window.aurora.conversations.getSystemPrompt(convId)) ?? '')
           : ''
-        const sysPrompt =
-          convSys.trim() ||
+        const mode = modes.find((m) => m.id === modeIdRef.current)
+        const globalSys =
           ((await window.aurora.settings.get('systemPrompt')) ?? '').trim()
+        const sysPrompt =
+          convSys.trim() || (mode?.systemPrompt.trim() ?? '') || globalSys
         if (sysPrompt) {
           apiMessages.unshift({ role: 'system', content: sysPrompt })
         }
@@ -370,10 +403,11 @@ export function useChat(opts: UseChatOptions): ChatController {
           requestId,
           modelId: mid,
           messages: apiMessages,
+          toolsEnabled: mode?.toolsEnabled !== false,
         })
       })()
     },
-    [messages, modelId, models],
+    [messages, modelId, models, modes],
   )
 
   // 冒烟模式：模型加载后自动发起 Mock 对话
@@ -444,6 +478,10 @@ export function useChat(opts: UseChatOptions): ChatController {
     modelId,
     setModelId,
     reloadModels,
+    modes,
+    modeId,
+    setMode,
+    reloadModes,
     streamingId,
     send,
     stop,

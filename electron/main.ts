@@ -39,6 +39,7 @@ import { registerChatIpc, getSmokeChatRequests } from './chat'
 import { isShellAllowed, runPython } from './tools'
 import { mcpManager } from './mcp'
 import { kbManager } from './kb'
+import { getDispatcher } from './net'
 import { spawnSync } from 'child_process'
 
 const SMOKE = process.env.SMOKE === '1'
@@ -239,11 +240,11 @@ function createWindow(): void {
   }
 
   if (SMOKE) {
-    // 兜底：110 秒未完成强制退出，避免打包版静默挂起
+    // 兜底：240 秒未完成强制退出，避免打包版静默挂起
     setTimeout(() => {
       bootLog('watchdog: force exit(2)')
       app.exit(2)
-    }, 110000)
+    }, 240000)
     void runSmoke(win, errors)
   }
 }
@@ -548,6 +549,32 @@ const DOM_AUDIT = `
   out.modelPillRestored = (
     (document.querySelector('[data-model-pill]') || {}).textContent || ''
   )
+
+  // 模式切换：打开菜单 → 切换到编程助手 → 断言 pill 变化 → 切回
+  const modePill = document.querySelector('[data-mode-pill]')
+  if (modePill) modePill.click()
+  await sleep(300)
+  out.modeMenuOpen = !!document.querySelector('[data-mode-menu]')
+  out.modeItems = document.querySelectorAll('[data-mode-item]').length
+  const coderMode = Array.from(document.querySelectorAll('[data-mode-item]')).find(
+    (b) => (b.textContent || '').includes('编程助手')
+  )
+  if (coderMode) coderMode.click()
+  await sleep(300)
+  out.modePillAfter = (
+    (document.querySelector('[data-mode-pill]') || {}).textContent || ''
+  )
+  const modePill2 = document.querySelector('[data-mode-pill]')
+  if (modePill2) modePill2.click()
+  await sleep(300)
+  const agentMode = Array.from(document.querySelectorAll('[data-mode-item]')).find(
+    (b) => (b.textContent || '').includes('Agent 完整模式')
+  )
+  if (agentMode) agentMode.click()
+  await sleep(300)
+  out.modePillRestored = (
+    (document.querySelector('[data-mode-pill]') || {}).textContent || ''
+  )
   return out
 })()
 `
@@ -765,10 +792,16 @@ async function runSmoke(w: BrowserWindow, errors: string[]): Promise<void> {
     isShellAllowed('git status', []) === false &&
     isShellAllowed('git status', ['git ']) === true &&
     isShellAllowed('echo hi', ['echo*']) === true
-  const pyCheck = spawnSync('python', ['--version'], { encoding: 'utf-8' })
+  const pyCheck = spawnSync('python', ['--version'], {
+    encoding: 'utf-8',
+    timeout: 10000,
+  })
+  bootLog('python check done: ' + (pyCheck.status === 0 ? 'ok' : 'status=' + pyCheck.status))
   report.pythonAvailable = pyCheck.status === 0
   if (report.pythonAvailable) {
+    bootLog('runPython start')
     const pr = await runPython('print(6*7)')
+    bootLog('runPython done')
     report.pythonResult = pr.ok ? pr.result : `ERR: ${pr.error}`
   }
 
@@ -786,16 +819,8 @@ async function runSmoke(w: BrowserWindow, errors: string[]): Promise<void> {
     }
   })
   await Promise.race([netDone, new Promise((r) => setTimeout(r, 40000))])
+  bootLog('net-verified: ' + JSON.stringify(netVerified))
   report.netVerified = netVerified
-  // 真实网络探测（仅记录，不作断言）
-  try {
-    const probe = await fetch('https://www.bing.com', {
-      signal: AbortSignal.timeout(5000),
-    })
-    report.realNetworkOk = probe.ok
-  } catch {
-    report.realNetworkOk = false
-  }
 
   // 等待 MCP Agent 端到端验证
   let mcpVerified: { done: boolean; mcpOk: boolean } | null = null
@@ -844,6 +869,15 @@ async function runSmoke(w: BrowserWindow, errors: string[]): Promise<void> {
   })
   await Promise.race([errDone, new Promise((r) => setTimeout(r, 40000))])
   report.errorVerified = errorVerified
+  // 真实网络探测（仅记录，不作断言；置于所有阶段之后，避免与通知竞态）
+  try {
+    const probe = await fetch('https://www.bing.com', {
+      signal: AbortSignal.timeout(5000),
+    })
+    report.realNetworkOk = probe.ok
+  } catch {
+    report.realNetworkOk = false
+  }
   report.globalShortcut = globalShortcut.isRegistered('CommandOrControl+Shift+A')
 
   // DOM 审计（深色阶段执行，与 darkClass 断言保持一致）
@@ -1006,6 +1040,13 @@ async function runSmoke(w: BrowserWindow, errors: string[]): Promise<void> {
   if (dom.modelMenuItems < 3) failures.push(`模型菜单条目过少: ${dom.modelMenuItems}`)
   if (String(dom.modelPillAfterSwitch) === String(dom.modelPillRestored))
     failures.push('模型切换未生效')
+  // 模式切换断言
+  if (dom.modeMenuOpen !== true) failures.push('模式菜单未打开')
+  if (dom.modeItems < 4) failures.push(`模式条目过少: ${dom.modeItems}`)
+  if (!String(dom.modePillAfter).includes('编程助手'))
+    failures.push(`模式切换未生效: ${dom.modePillAfter}`)
+  if (!String(dom.modePillRestored).includes('Agent'))
+    failures.push(`模式切回失败: ${dom.modePillRestored}`)
   // Token 统计断言
   const usageMeta = String(dom.usageMeta)
   if (!usageMeta.includes('tokens') || !usageMeta.includes('耗时') || !usageMeta.includes('≈¥'))
@@ -1232,6 +1273,7 @@ ipcMain.handle('app:openDataDir', () => {
   void shell.openPath(app.getPath('userData'))
   return true
 })
+ipcMain.on('app:quit', () => app.quit())
 
 // ---- 会话导出 ----
 ipcMain.handle(
@@ -1359,15 +1401,23 @@ ipcMain.handle('models:test', async (_e, m) => {
     const res = await fetch(url, {
       headers: { Authorization: `Bearer ${m.apiKey}` },
       signal: ac.signal,
+      ...(getDispatcher() ? { dispatcher: getDispatcher() } : {}),
     })
     clearTimeout(timer)
     if (res.ok) {
       const j = (await res.json().catch(() => null)) as {
-        data?: unknown[]
+        data?: { id?: string }[]
       } | null
+      const modelIds = Array.isArray(j?.data)
+        ? j.data
+            .map((x) => String(x?.id ?? ''))
+            .filter(Boolean)
+            .slice(0, 100)
+        : []
       return {
         ok: true,
-        models: Array.isArray(j?.data) ? j.data.length : null,
+        models: modelIds.length,
+        modelIds,
       }
     }
     return { ok: false, message: `HTTP ${res.status}` }

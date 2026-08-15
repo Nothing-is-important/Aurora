@@ -79,6 +79,7 @@ export interface ConnectionTestResult {
   ok: boolean
   message?: string
   models?: number | null
+  modelIds?: string[]
 }
 
 export interface McpServerConfig {
@@ -162,6 +163,7 @@ export interface AuroraApi {
   app: {
     getVersion: () => Promise<string>
     openDataDir: () => Promise<boolean>
+    quit: () => void
   }
   mcp: {
     configure: (

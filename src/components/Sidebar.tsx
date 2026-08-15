@@ -1,6 +1,9 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Check,
+  FolderOpen,
+  Info,
+  LogOut,
   Monitor,
   Moon,
   Pin,
@@ -61,6 +64,27 @@ export default function Sidebar({
   const [query, setQuery] = useState('')
   const [editingId, setEditingId] = useState<string | null>(null)
   const [draft, setDraft] = useState('')
+  const [userMenuOpen, setUserMenuOpen] = useState(false)
+  const [appVersion, setAppVersion] = useState('')
+  const userMenuRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    void window.aurora.app.getVersion().then(setAppVersion)
+  }, [])
+
+  useEffect(() => {
+    if (!userMenuOpen) return
+    const onDown = (e: MouseEvent): void => {
+      if (
+        userMenuRef.current &&
+        !userMenuRef.current.contains(e.target as Node)
+      ) {
+        setUserMenuOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
+  }, [userMenuOpen])
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -223,13 +247,59 @@ export default function Sidebar({
         >
           <Settings size={15} strokeWidth={2} />
         </button>
-        <div className="ml-auto flex items-center gap-2 rounded-full py-1 pl-1 pr-2.5 transition-colors hover:bg-black/[0.04] dark:hover:bg-white/[0.06]">
-          <div className="flex h-6 w-6 items-center justify-center rounded-full bg-gradient-to-br from-apple-blue to-apple-purple text-[11px] font-semibold text-white">
-            A
-          </div>
-          <span className="text-[12.5px] font-medium text-black/70 dark:text-white/75">
-            本地用户
-          </span>
+        <div className="relative ml-auto" ref={userMenuRef}>
+          <button
+            data-user-chip
+            onClick={() => setUserMenuOpen((v) => !v)}
+            title="用户菜单"
+            className="flex items-center gap-2 rounded-full py-1 pl-1 pr-2.5 transition-colors hover:bg-black/[0.04] dark:hover:bg-white/[0.06]"
+          >
+            <div className="flex h-6 w-6 items-center justify-center rounded-full bg-gradient-to-br from-apple-blue to-apple-purple text-[11px] font-semibold text-white">
+              A
+            </div>
+            <span className="text-[12.5px] font-medium text-black/70 dark:text-white/75">
+              本地用户
+            </span>
+          </button>
+
+          {userMenuOpen && (
+            <div
+              data-user-menu
+              className="glass-strong animate-scaleIn absolute bottom-11 right-0 z-40 w-52 origin-bottom rounded-2xl p-1.5 shadow-glass"
+            >
+              <div className="px-3 pb-1.5 pt-1.5">
+                <p className="text-[12px] font-medium text-black/75 dark:text-white/80">
+                  本地用户
+                </p>
+                <p
+                  data-user-menu-version
+                  className="text-[10.5px] text-black/35 dark:text-white/35"
+                >
+                  Aurora v{appVersion || '0.1.0'}
+                </p>
+              </div>
+              <button
+                onClick={() => {
+                  setUserMenuOpen(false)
+                  void window.aurora.app.openDataDir()
+                }}
+                className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-[12.5px] text-black/70 transition-colors hover:bg-black/[0.04] dark:text-white/75 dark:hover:bg-white/[0.06]"
+              >
+                <FolderOpen size={13} strokeWidth={2} className="shrink-0 text-black/40 dark:text-white/40" />
+                打开数据目录
+              </button>
+              <button
+                onClick={() => {
+                  setUserMenuOpen(false)
+                  window.aurora.app.quit()
+                }}
+                className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-[12.5px] text-apple-red/85 transition-colors hover:bg-apple-red/10"
+              >
+                <LogOut size={13} strokeWidth={2} className="shrink-0" />
+                退出 Aurora
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </aside>
