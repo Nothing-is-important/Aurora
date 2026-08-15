@@ -16,8 +16,9 @@ const APP_NAME = 'Aurora DSH'
 
 if (SMOKE) {
   // 冒烟用独立 userData：每次运行唯一目录（避免上一场景残留的 GPU/dsh
-  // 进程持有句柄导致 EPERM），与真实用户数据完全隔离。
-  app.setPath('userData', join(__dirname, `.smoke-userdata-${process.pid}-${Date.now()}`))
+  // 进程持有句柄导致 EPERM），与真实用户数据完全隔离。用系统临时目录，
+  // 打包后（app.asar 只读）同样可写。
+  app.setPath('userData', join(app.getPath('temp'), `aurora-dsh-smoke-${process.pid}-${Date.now()}`))
   // 打包后的 GUI 进程无控制台：把日志镜像到文件供驱动断言
   const smokeLogFile = join(app.getPath('userData'), 'smoke-app.log')
   const mirror = (level) => (text) => {
