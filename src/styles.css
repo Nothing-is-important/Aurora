@@ -125,6 +125,16 @@ input[type='number'] {
   appearance: textfield;
 }
 
+/* 下拉选择：选项列表跟随深浅色（原生 select 默认白底） */
+select option {
+  background-color: #ffffff;
+  color: #1d1d1f;
+}
+.dark select option {
+  background-color: #1e1e26;
+  color: #f5f5f7;
+}
+
 /* 玻璃材质 */
 .glass {
   @apply backdrop-blur-2xl bg-white/60 dark:bg-[#17171d]/60 border border-black/[0.06] dark:border-white/[0.08];

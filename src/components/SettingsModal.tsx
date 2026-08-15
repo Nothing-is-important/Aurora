@@ -31,10 +31,19 @@ interface SettingsModalProps {
   onModesChanged?: () => void
 }
 
-const PROVIDERS: { id: ModelConfig['provider']; label: string }[] = [
-  { id: 'deepseek', label: 'DeepSeek 官方' },
-  { id: 'openai', label: 'OpenAI 兼容' },
-  { id: 'mock', label: '本地 Mock' },
+/** 常见提供方预设：切换时自动填充对应 Base URL */
+const PROVIDERS: { id: string; label: string; defaultBaseUrl: string }[] = [
+  { id: 'deepseek', label: 'DeepSeek 官方', defaultBaseUrl: 'https://api.deepseek.com/v1' },
+  { id: 'openai', label: 'OpenAI', defaultBaseUrl: 'https://api.openai.com/v1' },
+  { id: 'anthropic', label: 'Anthropic（兼容端点）', defaultBaseUrl: 'https://api.anthropic.com/v1' },
+  { id: 'grok', label: 'Grok (xAI)', defaultBaseUrl: 'https://api.x.ai/v1' },
+  { id: 'moonshot', label: 'Moonshot (Kimi)', defaultBaseUrl: 'https://api.moonshot.cn/v1' },
+  { id: 'zhipu', label: '智谱 GLM', defaultBaseUrl: 'https://open.bigmodel.cn/api/paas/v4' },
+  { id: 'qwen', label: '通义千问', defaultBaseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1' },
+  { id: 'ollama', label: 'Ollama 本地', defaultBaseUrl: 'http://localhost:11434/v1' },
+  { id: 'lmstudio', label: 'LM Studio 本地', defaultBaseUrl: 'http://localhost:1234/v1' },
+  { id: 'custom', label: '自定义（OpenAI 兼容）', defaultBaseUrl: '' },
+  { id: 'mock', label: '本地 Mock（演示）', defaultBaseUrl: '' },
 ]
 
 function emptyModel(): ModelConfig {
@@ -987,15 +996,20 @@ return { meta, setup }
                 <div>
                   <label className={label}>提供方</label>
                   <select
+                    data-settings-provider
                     className={field}
                     value={form.provider}
                     disabled={form.provider === 'mock'}
-                    onChange={(e) =>
+                    onChange={(e) => {
+                      const provider = e.target.value
+                      const preset = PROVIDERS.find((p) => p.id === provider)
+                      // 切换提供方自动填充对应默认 Base URL
                       setForm({
                         ...form,
-                        provider: e.target.value as ModelConfig['provider'],
+                        provider,
+                        baseUrl: preset?.defaultBaseUrl ?? '',
                       })
-                    }
+                    }}
                   >
                     {PROVIDERS.map((p) => (
                       <option key={p.id} value={p.id}>

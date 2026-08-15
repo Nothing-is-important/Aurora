@@ -3,7 +3,7 @@ export type ThemeSource = 'system' | 'light' | 'dark'
 export interface ModelConfig {
   id: string
   name: string
-  provider: 'deepseek' | 'openai' | 'mock'
+  provider: string
   baseUrl: string
   apiKey: string
   modelId: string

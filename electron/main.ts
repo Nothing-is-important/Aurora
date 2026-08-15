@@ -426,6 +426,24 @@ const DOM_AUDIT = `
   await sleep(350)
   out.draftCleared = !document.querySelector('[data-unsaved-badge]')
 
+  // 提供方切换自动填充 Base URL（deepseek → grok → 断言 → 切回）
+  const provSel = document.querySelector('[data-settings-provider]')
+  if (provSel) {
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value').set
+    setter.call(provSel, 'grok')
+    provSel.dispatchEvent(new Event('change', { bubbles: true }))
+  }
+  await sleep(350)
+  out.providerBaseUrlSwitched = (
+    (document.querySelector('[data-settings-baseurl]') || {}).value || ''
+  ) === 'https://api.x.ai/v1'
+  if (provSel) {
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value').set
+    setter.call(provSel, 'deepseek')
+    provSel.dispatchEvent(new Event('change', { bubbles: true }))
+  }
+  await sleep(300)
+
   // 插件编辑弹层：点击编辑 → 弹层出现 → 代码区有内容 → 关闭
   const pluginEditBtn = document.querySelector('[data-plugin-edit]')
   if (pluginEditBtn) pluginEditBtn.click()
@@ -1111,6 +1129,8 @@ async function runSmoke(w: BrowserWindow, errors: string[]): Promise<void> {
   if (dom.draftItemVisible !== true) failures.push('草稿条目未出现在模型列表')
   if (dom.draftActive !== true) failures.push('草稿条目未被高亮选中')
   if (dom.draftCleared !== true) failures.push('草稿删除未生效')
+  if (dom.providerBaseUrlSwitched !== true)
+    failures.push('提供方切换未自动填充 Base URL')
   if (dom.paramAutoAdapted !== true)
     failures.push('模型参数自动适配未生效（reasoner 应为 32768）')
   if (dom.pluginEditorOpen !== true) failures.push('插件编辑弹层未打开')

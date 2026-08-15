@@ -7,7 +7,7 @@ import * as fs from 'fs'
 export interface ModelConfig {
   id: string
   name: string
-  provider: 'deepseek' | 'openai' | 'mock'
+  provider: string
   baseUrl: string
   apiKey: string
   modelId: string
