@@ -66,9 +66,10 @@ function defaultDshHome() {
   return join(app.getPath('userData'), 'dsh-home')
 }
 
-// ---------- 内置运行时（dsh-runtime.zip → 共享临时目录，首启解压） ----------
+// ---------- 内置运行时（dsh-runtime.zip → %LOCALAPPDATA%，首启解压） ----------
+// 不用 %TEMP%：临时目录会被系统/杀软清理，导致运行时凭空消失。
 function runtimeDir() {
-  return join(app.getPath('temp'), 'aurora-dsh-runtime')
+  return join(process.env.LOCALAPPDATA ?? app.getPath('temp'), 'Aurora DSH', 'runtime')
 }
 
 function runtimeZipPath() {
@@ -84,10 +85,17 @@ function runtimeValid(dir, version) {
   } catch {
     return false
   }
-  return (
-    existsSync(join(dir, 'node.exe')) &&
-    existsSync(join(dir, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js'))
-  )
+  // 哨兵文件：运行时目录可能被符号链接递归删除误伤（部分包被清空），
+  // 关键包入口必须全部存在才算健康。
+  const sentinels = [
+    join(dir, 'node.exe'),
+    join(dir, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js'),
+    join(dir, 'node_modules', '@deepseek-ai', 'dsh-app-boot', 'lib', 'index.js'),
+    join(dir, 'node_modules', '@deepseek-ai', 'dsh-agent', 'lib', 'index.js'),
+    join(dir, 'node_modules', '@deepseek-ai', 'dsh-llm', 'lib', 'index.js'),
+    join(dir, 'node_modules', '@deepseek-ai', 'cordis-plugin-loader', 'lib', 'index.js'),
+  ]
+  return sentinels.every((p) => existsSync(p))
 }
 
 function extractZip(zip, target) {
@@ -98,7 +106,7 @@ function extractZip(zip, target) {
   })
 }
 
-/** 确保内置运行时可用：有效则复用；否则解压 zip（原子改名，防并发启动竞争）。 */
+/** 确保内置运行时可用：有效则复用；否则清掉损坏目录并重新解压 zip。 */
 async function ensureRuntime(version) {
   const dir = runtimeDir()
   if (runtimeValid(dir, version)) {
@@ -107,7 +115,9 @@ async function ensureRuntime(version) {
   }
   const zip = runtimeZipPath()
   if (!zip) return false
-  publishState({ phase: 'starting', message: '首次运行：正在解压内置运行时（约一分钟，仅此一次）…' })
+  publishState({ phase: 'starting', message: '正在修复/解压内置运行时（约一分钟）…' })
+  // 直接删除运行时目录本体是安全的（home 里的符号链接指向它，不反向）
+  rmSync(dir, { recursive: true, force: true })
   const tmp = `${dir}.tmp-${process.pid}`
   rmSync(tmp, { recursive: true, force: true })
   mkdirSync(tmp, { recursive: true })
