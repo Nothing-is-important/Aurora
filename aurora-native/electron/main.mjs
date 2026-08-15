@@ -9,6 +9,9 @@ import { bootEngine, disposeEngine, runtimeDir } from './engine.mjs'
 const __dirname = fileURLToPath(new URL('.', import.meta.url))
 const SMOKE = process.env.SMOKE === '1'
 
+// 独立 userData：不与 main 分支 Aurora（%APPDATA%\aurora）共享存储
+app.setPath('userData', join(app.getPath('appData'), 'aurora-native'))
+
 const DEV_URL = process.env.AURORA_DEV_URL ?? null // vite dev server（可选）
 const dshHome = join(app.getPath('userData'), 'dsh-home')
 
@@ -252,7 +255,10 @@ async function runSmoke() {
     ok('auroraUiRendered', dom.input === true && dom.sidebar === true, dom)
 
     const img = await win.webContents.capturePage()
-    ok('screenshotTaken', img.getSize().width > 0)
+    const shot = join(app.getPath('userData'), 'smoke-screenshot.png')
+    const { writeFileSync } = await import('node:fs')
+    writeFileSync(shot, img.toPNG())
+    ok('screenshotTaken', img.getSize().width > 0 && img.getSize().height > 0, shot)
   } catch (err) {
     ok('smokeRun', false, String(err))
   }
