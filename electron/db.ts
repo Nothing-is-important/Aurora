@@ -114,6 +114,17 @@ function migrate(): void {
       tool_steps_json TEXT NOT NULL DEFAULT '',
       created_at INTEGER NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS plugins (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL DEFAULT '',
+      version TEXT NOT NULL DEFAULT '0.0.1',
+      description TEXT NOT NULL DEFAULT '',
+      code TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'defined',
+      error TEXT NOT NULL DEFAULT '',
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
   `)
   // 旧库补列
   const alt = (sql: string): void => {
@@ -432,6 +443,84 @@ function randomId(): string {
     s += c[Math.floor(Math.random() * c.length)]
   }
   return s + Date.now().toString(36)
+}
+
+// ---- 动态插件（DPS）----
+export interface PluginRow {
+  id: string
+  name: string
+  version: string
+  description: string
+  code: string
+  status: 'defined' | 'running' | 'stopped' | 'error'
+  error: string
+  createdAt: number
+  updatedAt: number
+}
+
+export function listPlugins(): PluginRow[] {
+  if (!db) return []
+  const res = db.exec(
+    `SELECT id,name,version,description,code,status,error,created_at,updated_at
+     FROM plugins ORDER BY created_at`,
+  )
+  if (!res.length) return []
+  return res[0].values.map((r) => ({
+    id: String(r[0]),
+    name: String(r[1]),
+    version: String(r[2]),
+    description: String(r[3]),
+    code: String(r[4]),
+    status: String(r[5]) as PluginRow['status'],
+    error: String(r[6]),
+    createdAt: Number(r[7]),
+    updatedAt: Number(r[8]),
+  }))
+}
+
+export function getPlugin(id: string): PluginRow | null {
+  return listPlugins().find((p) => p.id === id) ?? null
+}
+
+export function upsertPlugin(p: {
+  id: string
+  name: string
+  version: string
+  description: string
+  code: string
+  status: string
+  error?: string
+}): void {
+  if (!db) return
+  db.run(
+    `INSERT INTO plugins (id,name,version,description,code,status,error,created_at,updated_at)
+     VALUES (?,?,?,?,?,?,?,?,?)
+     ON CONFLICT(id) DO UPDATE SET
+       name=excluded.name, version=excluded.version, description=excluded.description,
+       code=excluded.code, status=excluded.status, error=excluded.error,
+       updated_at=excluded.updated_at`,
+    [
+      p.id, p.name, p.version, p.description, p.code, p.status, p.error ?? '',
+      Date.now(), Date.now(),
+    ],
+  )
+  persist()
+}
+
+export function setPluginStatus(
+  id: string,
+  status: string,
+  error = '',
+): void {
+  db?.run('UPDATE plugins SET status = ?, error = ?, updated_at = ? WHERE id = ?', [
+    status, error, Date.now(), id,
+  ])
+  persist()
+}
+
+export function deletePlugin(id: string): void {
+  db?.run('DELETE FROM plugins WHERE id = ?', [id])
+  persist()
 }
 
 function persistNow(): void {

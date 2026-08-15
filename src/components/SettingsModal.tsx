@@ -1,20 +1,23 @@
 import { useEffect, useState } from 'react'
 import {
   BookOpen,
+  Boxes,
   Check,
   ChevronDown,
   Eye,
   EyeOff,
   FolderPlus,
   Loader2,
+  Play,
   Plus,
   PlugZap,
   RefreshCw,
   Server,
+  Square,
   Trash2,
   X,
 } from 'lucide-react'
-import type { ModelConfig, McpServerConfig, KbRow } from '../lib/ipc'
+import type { ModelConfig, McpServerConfig, KbRow, PluginRow } from '../lib/ipc'
 import { loadCustomModes, saveCustomModes } from '../lib/modes'
 import type { ChatMode } from '../lib/modes'
 
@@ -81,6 +84,35 @@ export default function SettingsModal({
   const [kbList, setKbList] = useState<KbRow[]>([])
   const [appVersion, setAppVersion] = useState('')
   const [customModes, setCustomModes] = useState<ChatMode[]>([])
+  const [pluginList, setPluginList] = useState<PluginRow[]>([])
+  const [pluginCode, setPluginCode] = useState('')
+  const [pluginMsg, setPluginMsg] = useState<string | null>(null)
+
+  const loadPlugins = async (): Promise<void> => {
+    setPluginList(await window.aurora.plugins.list())
+  }
+
+  const createAndRunPlugin = async (): Promise<void> => {
+    const code = pluginCode.trim()
+    if (!code) return
+    const id = `plugin-${Date.now().toString(36)}`
+    await window.aurora.plugins.define(id, code)
+    const r = await window.aurora.plugins.run(id)
+    setPluginCode('')
+    setPluginMsg(r.ok ? '插件已保存并运行' : `运行失败：${r.error ?? '未知错误'}`)
+    setTimeout(() => setPluginMsg(null), 4000)
+    void loadPlugins()
+  }
+
+  const pluginAction = async (fn: () => Promise<unknown>): Promise<void> => {
+    try {
+      await fn()
+    } catch (err) {
+      setPluginMsg(`失败：${String(err)}`)
+      setTimeout(() => setPluginMsg(null), 3000)
+    }
+    void loadPlugins()
+  }
 
   const reloadCustomModes = async (): Promise<void> => {
     setCustomModes(await loadCustomModes())
@@ -149,6 +181,7 @@ export default function SettingsModal({
       loadMcp()
       loadKb()
       void reloadCustomModes()
+      void loadPlugins()
     }
   }, [open])
 
@@ -772,6 +805,112 @@ export default function SettingsModal({
                       />
                     </div>
                   ))}
+                </div>
+              </div>
+
+              <div>
+                <label className={label}>
+                  动态插件（DPS · 代码热定义 / 运行 / 停止）
+                </label>
+                <div className="space-y-1.5">
+                  {pluginList.length === 0 && (
+                    <p className="rounded-lg bg-black/[0.03] px-3 py-2.5 text-[11.5px] text-black/40 dark:bg-white/[0.05] dark:text-white/40">
+                      暂无插件。在下方粘贴插件代码并「保存并运行」，插件注册的工具会并入 Agent 循环。
+                    </p>
+                  )}
+                  {pluginList.map((p) => (
+                    <div
+                      key={p.id}
+                      data-plugin-row
+                      className="rounded-xl bg-black/[0.035] px-3 py-2 dark:bg-white/[0.05]"
+                    >
+                      <div className="flex items-center gap-2">
+                        <Boxes size={13} strokeWidth={2} className="shrink-0 text-apple-blue" />
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-[12px] font-medium text-black/75 dark:text-white/80">
+                            {p.name}
+                            <span className="ml-1.5 font-mono text-[10px] text-black/35 dark:text-white/35">
+                              v{p.version}
+                            </span>
+                          </span>
+                          <span className="block truncate text-[10.5px] text-black/35 dark:text-white/35">
+                            {p.description || '无描述'}
+                          </span>
+                        </span>
+                        <span
+                          data-plugin-status
+                          className={`h-1.5 w-1.5 shrink-0 rounded-full ${
+                            p.status === 'running'
+                              ? 'bg-apple-green'
+                              : p.status === 'error'
+                                ? 'bg-apple-red'
+                                : p.status === 'defined'
+                                  ? 'bg-apple-blue'
+                                  : 'bg-black/25 dark:bg-white/30'
+                          }`}
+                          title={p.status}
+                        />
+                        {p.status !== 'running' ? (
+                          <button
+                            data-plugin-run
+                            title="运行"
+                            onClick={() =>
+                              void pluginAction(() => window.aurora.plugins.run(p.id))
+                            }
+                            className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-black/40 transition-colors hover:bg-apple-green/10 hover:text-apple-green dark:text-white/40"
+                          >
+                            <Play size={12} strokeWidth={2.4} />
+                          </button>
+                        ) : (
+                          <button
+                            title="停止"
+                            onClick={() =>
+                              void pluginAction(() => window.aurora.plugins.stop(p.id))
+                            }
+                            className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-black/40 transition-colors hover:bg-apple-orange/10 hover:text-apple-orange dark:text-white/40"
+                          >
+                            <Square size={11} strokeWidth={2.4} />
+                          </button>
+                        )}
+                        <button
+                          title="删除"
+                          onClick={() =>
+                            void pluginAction(() => window.aurora.plugins.remove(p.id))
+                          }
+                          className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-black/35 transition-colors hover:bg-apple-red/10 hover:text-apple-red dark:text-white/35"
+                        >
+                          <Trash2 size={12} strokeWidth={2.2} />
+                        </button>
+                      </div>
+                      {p.status === 'error' && p.error && (
+                        <p className="mt-1 select-text break-all font-mono text-[10.5px] leading-relaxed text-apple-red/80">
+                          {p.error}
+                        </p>
+                      )}
+                    </div>
+                  ))}
+                  <textarea
+                    data-plugin-code
+                    rows={6}
+                    value={pluginCode}
+                    onChange={(e) => setPluginCode(e.target.value)}
+                    placeholder={`// 插件代码：返回 { meta, setup(api) }，setup 中用 api.registerTool 注册工具\nconst meta = { name: '我的插件', version: '1.0.0', description: '…' }\nfunction setup(api) {\n  api.registerTool({\n    name: 'my_tool',\n    description: '…',\n    handler: (args) => '结果',\n  })\n}\nreturn { meta, setup }`}
+                    className="w-full resize-y rounded-lg bg-black/[0.04] px-3 py-2 font-mono text-[11px] leading-relaxed text-black/70 outline-none ring-1 ring-transparent transition-shadow focus:ring-apple-blue/50 dark:bg-white/[0.07] dark:text-white/75"
+                  />
+                  <div className="flex items-center gap-2">
+                    <button
+                      data-plugin-create
+                      onClick={() => void createAndRunPlugin()}
+                      className="h-8 rounded-lg bg-apple-blue px-4 text-[12px] font-medium text-white transition-all duration-200 ease-spring hover:brightness-110 active:scale-[0.96]"
+                    >
+                      保存并运行
+                    </button>
+                    {pluginMsg && (
+                      <span className="text-[11.5px] text-black/45 dark:text-white/45">
+                        {pluginMsg}
+                      </span>
+                    )}
+                  </div>
                 </div>
               </div>
 

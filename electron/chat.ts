@@ -3,6 +3,7 @@ import type { WebContents } from 'electron'
 import type { ModelConfig } from './db'
 import { executeTool, TOOL_DEFS } from './tools'
 import { mcpManager } from './mcp'
+import { pluginManager } from './plugins'
 import { getDispatcher } from './net'
 
 export interface ApiChatMessage {
@@ -128,7 +129,11 @@ async function runChat(
         role: m.role,
         content: m.content as string | unknown[] | null,
       }))
-      const allTools = [...TOOL_DEFS, ...mcpManager.getToolDefs()]
+      const allTools = [
+        ...TOOL_DEFS,
+        ...mcpManager.getToolDefs(),
+        ...pluginManager.getToolDefs(),
+      ]
       const tools =
         req.toolsEnabled === false
           ? []
@@ -173,7 +178,9 @@ async function runChat(
           })
           const r = await (tc.name.startsWith('mcp__')
             ? mcpManager.callTool(tc.name, args)
-            : executeTool(tc.name, args))
+            : tc.name.startsWith('plugin__')
+              ? pluginManager.execute(tc.name, args)
+              : executeTool(tc.name, args))
           const summary = (r.ok ? r.result : r.error) ?? ''
           emit(wc, 'chat:tool', {
             requestId: req.requestId,
@@ -381,6 +388,7 @@ async function mockCallOnce(
   const wantsSearchDemo = userText.includes('搜索')
   const wantsFetchDemo = userText.includes('抓取')
   const wantsMcpDemo = userText.includes('MCP')
+  const wantsPluginDemo = userText.includes('插件')
   const wantsKbDemo = userText.includes('知识库')
   const wantsErrorDemo = userText.includes('模拟错误')
   // 模拟临时错误：仅第一次失败，重试应成功（真实世界语义）
@@ -390,7 +398,7 @@ async function mockCallOnce(
     throw new Error('模拟的错误响应（用于验证错误卡片与重试功能）')
   }
   const wantsToolDemo =
-    wantsFileDemo || wantsShellDemo || wantsPythonDemo || wantsSearchDemo || wantsFetchDemo || wantsMcpDemo || wantsKbDemo
+    wantsFileDemo || wantsShellDemo || wantsPythonDemo || wantsSearchDemo || wantsFetchDemo || wantsMcpDemo || wantsKbDemo || wantsPluginDemo
 
   if (wantsToolDemo && !hasToolResult) {
     // 第一轮：演示工具调用
@@ -404,6 +412,14 @@ async function mockCallOnce(
       }
       reasoning =
         '用户想检索本地知识库。我将使用 search_knowledge 工具查询相关内容，并附上引用来源。'
+    } else if (wantsPluginDemo) {
+      toolCall = {
+        id: 'call_mock_plugin',
+        name: 'plugin__demo-time__get_current_time',
+        argsStr: JSON.stringify({}),
+      }
+      reasoning =
+        '用户想验证动态插件系统。我将调用插件 demo-time 的 get_current_time 工具，检查插件工具链路是否正常。'
     } else if (wantsMcpDemo) {
       toolCall = {
         id: 'call_mock_mcp',

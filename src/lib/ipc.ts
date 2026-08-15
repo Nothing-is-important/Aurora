@@ -100,6 +100,18 @@ export interface KbRow {
   createdAt: number
 }
 
+export interface PluginRow {
+  id: string
+  name: string
+  version: string
+  description: string
+  code: string
+  status: 'defined' | 'running' | 'stopped' | 'error'
+  error: string
+  createdAt: number
+  updatedAt: number
+}
+
 export interface AuroraApi {
   smoke: boolean
   window: {
@@ -178,6 +190,13 @@ export interface AuroraApi {
     remove: (id: string) => Promise<boolean>
     rebuild: (id: string) => Promise<KbRow | null>
   }
+  plugins: {
+    list: () => Promise<PluginRow[]>
+    define: (id: string, code: string) => Promise<PluginRow>
+    run: (id: string) => Promise<{ ok: boolean; error?: string }>
+    stop: (id: string) => Promise<boolean>
+    remove: (id: string) => Promise<boolean>
+  }
   chat: {
     start: (req: ChatStartRequest) => void
     stop: (requestId: string) => void
@@ -204,6 +223,7 @@ export interface AuroraApi {
     lastStatus?: string
     lastError?: string
   }) => void
+  smokeNotifyPluginVerified: (p: { done: boolean; pluginOk: boolean }) => void
   smokeNotifyStopVerified: (p: { stoppedEarly: boolean; errored: boolean }) => void
   smokeNotifyConvVerified: (p: {
     listCount: number

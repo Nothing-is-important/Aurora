@@ -292,6 +292,7 @@ function AppInner() {
 
   // ---- 冒烟第十二阶段：错误与重试 ----
   const phase12 = useRef(false)
+  const [errorDone, setErrorDone] = useState(false)
   useEffect(() => {
     if (!window.aurora.smoke || !kbDone || phase12.current) return
     phase12.current = true
@@ -312,8 +313,32 @@ function AppInner() {
         lastStatus: (lastAsst?.status ?? 'none') as string,
         lastError: (lastAsst?.error ?? '') as string,
       })
+      setErrorDone(true)
     })()
   }, [kbDone, chat])
+
+  // ---- 冒烟第十三阶段：动态插件（DPS）Agent 端到端 ----
+  const phase13 = useRef(false)
+  useEffect(() => {
+    if (!window.aurora.smoke || !errorDone || phase13.current) return
+    phase13.current = true
+    void (async () => {
+      chat.send('请调用插件工具获取当前时间')
+      const ok = await waitFor(
+        () =>
+          streamingAppRef.current === null &&
+          messagesRef.current.length === 20,
+        30000,
+      )
+      const pluginSteps = messagesRef.current.flatMap((m) =>
+        (m.toolSteps ?? []).filter((s) => s.name.startsWith('plugin__')),
+      )
+      const pluginOk =
+        pluginSteps.length > 0 &&
+        pluginSteps.some((s) => s.status === 'done')
+      window.aurora.smokeNotifyPluginVerified({ done: ok, pluginOk })
+    })()
+  }, [errorDone, chat])
 
   const handleSelect = useCallback((id: string) => {
     setActiveId(id)

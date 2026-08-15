@@ -39,6 +39,8 @@ import { registerChatIpc, getSmokeChatRequests } from './chat'
 import { isShellAllowed, runPython } from './tools'
 import { mcpManager } from './mcp'
 import { kbManager } from './kb'
+import { pluginManager } from './plugins'
+import { listPlugins } from './db'
 import { getDispatcher } from './net'
 import { spawnSync } from 'child_process'
 
@@ -60,6 +62,20 @@ function bootLog(msg: string): void {
 let win: BrowserWindow | null = null
 let tray: Tray | null = null
 let trayCreated = false
+
+// ---- 单实例：重复启动时聚焦已有窗口 ----
+const gotSingleLock = app.requestSingleInstanceLock()
+if (!gotSingleLock) {
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    if (win) {
+      if (win.isMinimized()) win.restore()
+      win.show()
+      win.focus()
+    }
+  })
+}
 
 // ---- 系统托盘 ----
 function createTray(): boolean {
@@ -396,6 +412,12 @@ const DOM_AUDIT = `
   await sleep(350)
   out.draftCleared = !document.querySelector('[data-unsaved-badge]')
 
+  // 动态插件（DPS）区块
+  out.pluginRows = document.querySelectorAll('[data-plugin-row]').length
+  out.pluginRunning = Array.from(document.querySelectorAll('[data-plugin-status]')).some(
+    (el) => el.getAttribute('title') === 'running'
+  )
+
   const closeSettings = document.querySelector('button[aria-label="关闭设置"]')
   if (closeSettings) closeSettings.click()
   await sleep(350)
@@ -610,6 +632,18 @@ async function runSmoke(w: BrowserWindow, errors: string[]): Promise<void> {
     })
     report.mcpEchoResult = echo.ok ? echo.result : `ERR: ${echo.error}`
   }
+
+  // 动态插件（DPS）：运行内置示例插件并直接调用工具
+  const pluginRun = pluginManager.run('demo-time')
+  report.pluginRunOk = pluginRun.ok
+  report.pluginRunError = pluginRun.error ?? ''
+  report.pluginToolCount = pluginManager.getToolDefs().length
+  const pluginCall = await pluginManager.execute(
+    'plugin__demo-time__get_current_time',
+    {},
+  )
+  report.pluginCallOk = pluginCall.ok
+  report.pluginCallResult = pluginCall.result ?? pluginCall.error ?? ''
 
   // 知识库：真实建库与 BM25 检索验证
   const kbDir = path.join(app.getPath('userData'), 'kb-smoke')
@@ -869,6 +903,24 @@ async function runSmoke(w: BrowserWindow, errors: string[]): Promise<void> {
   })
   await Promise.race([errDone, new Promise((r) => setTimeout(r, 40000))])
   report.errorVerified = errorVerified
+
+  // 等待动态插件 Agent 端到端验证
+  let pluginVerified: { done: boolean; pluginOk: boolean } | null = null
+  let pluginResolve: (() => void) | null = null
+  const pluginDone = new Promise<void>((resolve) => {
+    pluginResolve = resolve
+  })
+  ipcMain.on('smoke:plugin-verified', (_e, p) => {
+    pluginVerified = p
+    if (pluginResolve) {
+      pluginResolve()
+      pluginResolve = null
+    }
+  })
+  await Promise.race([pluginDone, new Promise((r) => setTimeout(r, 40000))])
+  bootLog('plugin-verified: ' + JSON.stringify(pluginVerified))
+  report.pluginVerified = pluginVerified
+
   // 真实网络探测（仅记录，不作断言；置于所有阶段之后，避免与通知竞态）
   try {
     const probe = await fetch('https://www.bing.com', {
@@ -907,7 +959,7 @@ async function runSmoke(w: BrowserWindow, errors: string[]): Promise<void> {
     failures.push(`检查器宽度异常: ${dom.inspectorW}`)
   if (dom.chatW < 600) failures.push(`对话区宽度异常: ${dom.chatW}`)
   if (dom.overflowX === true) failures.push('存在水平溢出')
-  if (dom.messages !== 18) failures.push(`冒烟消息数量错误: ${dom.messages}`)
+  if (dom.messages !== 20) failures.push(`冒烟消息数量错误: ${dom.messages}`)
   // 气泡宽度固定：应铺满消息容器（不随内容长度变化）
   if (dom.assistantBubbleW < 600)
     failures.push(`助手气泡未固定全宽: ${dom.assistantBubbleW}`)
@@ -1006,6 +1058,8 @@ async function runSmoke(w: BrowserWindow, errors: string[]): Promise<void> {
   if (dom.draftItemVisible !== true) failures.push('草稿条目未出现在模型列表')
   if (dom.draftActive !== true) failures.push('草稿条目未被高亮选中')
   if (dom.draftCleared !== true) failures.push('草稿删除未生效')
+  if (dom.pluginRows < 1) failures.push(`设置弹窗插件列表缺失: ${dom.pluginRows}`)
+  if (dom.pluginRunning !== true) failures.push('示例插件未处于运行状态')
   if (dom.settingsClosed !== true) failures.push('设置弹窗未关闭')
   // 导出验证
   const ev = exportVerified as {
@@ -1082,7 +1136,7 @@ async function runSmoke(w: BrowserWindow, errors: string[]): Promise<void> {
   if (!String(report.helloContent).includes('hello from aurora'))
     failures.push(`hello.py 内容异常: ${report.helloContent}`)
   if (report.toolStepsInDb !== true) failures.push('DB 中工具步骤未落盘')
-  if (dom.toolStepCards < 5) failures.push(`消息内工具步骤卡片不足: ${dom.toolStepCards}`)
+  if (dom.toolStepCards < 6) failures.push(`消息内工具步骤卡片不足: ${dom.toolStepCards}`)
   if (dom.inspectorToolStep !== true) failures.push('检查器工具 tab 步骤缺失')
   // 系统命令断言
   const shv = shellVerified as { done: boolean; shellOk: boolean } | null
@@ -1128,6 +1182,17 @@ async function runSmoke(w: BrowserWindow, errors: string[]): Promise<void> {
     failures.push('重试流程未完成')
   if (dom.retryWorks !== true) failures.push('重试后错误卡片未消失')
   if (dom.msgAfterRetry !== 18) failures.push(`重试后消息数错误: ${dom.msgAfterRetry}`)
+  // 动态插件（DPS）断言
+  if (report.pluginRunOk !== true)
+    failures.push(`示例插件运行失败: ${report.pluginRunError}`)
+  if (Number(report.pluginToolCount) < 1)
+    failures.push(`插件工具未注册: ${report.pluginToolCount}`)
+  if (report.pluginCallOk !== true || !String(report.pluginCallResult).includes('20'))
+    failures.push(`插件工具调用异常: ${report.pluginCallResult}`)
+  const plv = pluginVerified as { done: boolean; pluginOk: boolean } | null
+  if (!plv || plv.done !== true)
+    failures.push('插件 Agent 端到端验证失败: ' + JSON.stringify(plv))
+  if (plv && plv.pluginOk !== true) failures.push('插件步骤结果异常')
   // 自动备份断言
   if (report.autoBackupOk !== true) failures.push('自动备份未生成')
   if (report.proxySettingOk !== true) failures.push('代理设置存取异常')
@@ -1264,6 +1329,21 @@ ipcMain.handle('kb:rebuild', (_e, id: string) => kbManager.rebuild(id))
 // ---- MCP ----
 ipcMain.handle('mcp:configure', async (_e, servers) => {
   return await mcpManager.configure(servers)
+})
+
+// ---- 动态插件（DPS） ----
+ipcMain.handle('plugins:list', () => listPlugins())
+ipcMain.handle('plugins:define', (_e, id: string, code: string) =>
+  pluginManager.define(id, code),
+)
+ipcMain.handle('plugins:run', (_e, id: string) => pluginManager.run(id))
+ipcMain.handle('plugins:stop', (_e, id: string) => {
+  pluginManager.stop(id)
+  return true
+})
+ipcMain.handle('plugins:delete', (_e, id: string) => {
+  pluginManager.remove(id)
+  return true
 })
 
 // ---- 应用信息 ----
@@ -1441,6 +1521,8 @@ app.whenReady().then(async () => {
   }
   await kbManager.init()
   bootLog('kb init ok')
+  await pluginManager.init()
+  bootLog('plugins init ok')
   const backupPath = doAutoBackup()
   bootLog('auto backup: ' + (backupPath ?? 'skipped'))
   trayCreated = createTray()

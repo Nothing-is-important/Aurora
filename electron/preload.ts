@@ -100,6 +100,18 @@ export interface KbRow {
   createdAt: number
 }
 
+export interface PluginRow {
+  id: string
+  name: string
+  version: string
+  description: string
+  code: string
+  status: 'defined' | 'running' | 'stopped' | 'error'
+  error: string
+  createdAt: number
+  updatedAt: number
+}
+
 function on<T>(channel: string, cb: (payload: T) => void): () => void {
   const listener = (_e: unknown, payload: T): void => cb(payload)
   ipcRenderer.on(channel, listener)
@@ -210,6 +222,16 @@ const api = {
     rebuild: (id: string): Promise<KbRow | null> =>
       ipcRenderer.invoke('kb:rebuild', id),
   },
+  plugins: {
+    list: (): Promise<PluginRow[]> => ipcRenderer.invoke('plugins:list'),
+    define: (id: string, code: string): Promise<PluginRow> =>
+      ipcRenderer.invoke('plugins:define', id, code),
+    run: (id: string): Promise<{ ok: boolean; error?: string }> =>
+      ipcRenderer.invoke('plugins:run', id),
+    stop: (id: string): Promise<boolean> => ipcRenderer.invoke('plugins:stop', id),
+    remove: (id: string): Promise<boolean> =>
+      ipcRenderer.invoke('plugins:delete', id),
+  },
   chat: {
     start: (req: ChatStartRequest): void => ipcRenderer.send('chat:start', req),
     stop: (requestId: string): void =>
@@ -246,6 +268,8 @@ const api = {
     lastStatus?: string
     lastError?: string
   }): void => ipcRenderer.send('smoke:error-verified', p),
+  smokeNotifyPluginVerified: (p: { done: boolean; pluginOk: boolean }): void =>
+    ipcRenderer.send('smoke:plugin-verified', p),
   smokeNotifyStopVerified: (p: { stoppedEarly: boolean; errored: boolean }): void =>
     ipcRenderer.send('smoke:stop-verified', p),
   smokeNotifyConvVerified: (p: {
