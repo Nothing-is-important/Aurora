@@ -21,7 +21,7 @@ import {
 import type { ModelConfig, McpServerConfig, KbRow, PluginRow } from '../lib/ipc'
 import { loadCustomModes, saveCustomModes } from '../lib/modes'
 import type { ChatMode } from '../lib/modes'
-import { defaultParamsFor } from '../lib/params'
+import { defaultParamsFor, maxTokensFor } from '../lib/params'
 
 interface SettingsModalProps {
   open: boolean
@@ -67,7 +67,7 @@ export default function SettingsModal({
     ok: boolean
     message?: string
     models?: number | null
-    modelIds?: string[]
+    modelIds?: { id: string; contextLength?: number }[]
   } | null>(null)
   const [saving, setSaving] = useState(false)
   /** 未保存的新模型草稿（点击 + 后立即出现在左侧列表，带「未保存」徽标） */
@@ -358,10 +358,11 @@ return { meta, setup }
 
   const remove = async (): Promise<void> => {
     if (draftModel && draftModel.id === selectedId) {
-      // 删除未保存草稿：直接丢弃，回到已保存列表第一项
+      // 删除未保存草稿：直接丢弃，回到已保存列表第一项（非 mock 优先）
+      const first = models.find((m) => m.provider !== 'mock') ?? models[0]
       setDraftModel(null)
-      setForm(models[0] ?? emptyModel())
-      setSelectedId(models[0]?.id ?? '')
+      setForm(first ?? emptyModel())
+      setSelectedId(first?.id ?? '')
       setTestResult(null)
       return
     }
@@ -380,32 +381,37 @@ return { meta, setup }
   }
 
   /** 一键添加端点返回的模型（ccswitch 式自动获取） */
-  const addFetchedModel = async (modelId: string): Promise<void> => {
+  const addFetchedModel = async (
+    modelId: string,
+    contextLength?: number,
+  ): Promise<void> => {
     await window.aurora.models.save({
       ...form,
       id: modelId,
       name: modelId,
       enabled: true,
-      // 按模型自动套用推荐默认参数
+      // 按模型自动套用推荐默认参数（端点上下文长度优先参与计算）
       ...defaultParamsFor(modelId),
+      maxTokens: maxTokensFor(modelId, contextLength),
     })
     onChanged()
     setTestResult((prev) =>
       prev
-        ? { ...prev, modelIds: (prev.modelIds ?? []).filter((x) => x !== modelId) }
+        ? { ...prev, modelIds: (prev.modelIds ?? []).filter((x) => x.id !== modelId) }
         : prev,
     )
   }
 
   const addAllFetched = async (): Promise<void> => {
     const ids = testResult?.modelIds ?? []
-    for (const id of ids) {
+    for (const item of ids) {
       await window.aurora.models.save({
         ...form,
-        id,
-        name: id,
+        id: item.id,
+        name: item.id,
         enabled: true,
-        ...defaultParamsFor(id),
+        ...defaultParamsFor(item.id),
+        maxTokens: maxTokensFor(item.id, item.contextLength),
       })
     }
     onChanged()
@@ -1163,17 +1169,22 @@ return { meta, setup }
                     </button>
                   </div>
                   <div className="max-h-36 space-y-0.5 overflow-y-auto">
-                    {(testResult.modelIds ?? []).map((id) => (
+                    {(testResult.modelIds ?? []).map((item) => (
                       <button
-                        key={id}
+                        key={item.id}
                         data-fetched-model
-                        onClick={() => void addFetchedModel(id)}
+                        onClick={() => void addFetchedModel(item.id, item.contextLength)}
                         className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-black/[0.04] dark:hover:bg-white/[0.06]"
                       >
                         <Plus size={11} strokeWidth={2.4} className="shrink-0 text-apple-blue" />
                         <span className="min-w-0 flex-1 truncate font-mono text-[11.5px] text-black/70 dark:text-white/75">
-                          {id}
+                          {item.id}
                         </span>
+                        {item.contextLength && (
+                          <span className="shrink-0 rounded bg-black/[0.05] px-1 py-px text-[9.5px] text-black/40 dark:bg-white/[0.08] dark:text-white/40">
+                            {Math.round(item.contextLength / 1024)}K 上下文
+                          </span>
+                        )}
                       </button>
                     ))}
                   </div>
@@ -1193,6 +1204,7 @@ return { meta, setup }
                     <button
                       onClick={test}
                       disabled={testing}
+                      data-test-conn
                       className="flex h-9 items-center gap-1.5 rounded-xl bg-black/[0.05] px-4 text-[13px] font-medium text-black/65 transition-colors hover:bg-black/[0.09] dark:bg-white/[0.08] dark:text-white/70 dark:hover:bg-white/[0.13]"
                     >
                       {testing ? (

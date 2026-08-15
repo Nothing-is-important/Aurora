@@ -36,3 +36,18 @@ export function defaultParamsFor(modelId: string): DefaultParams {
   const hit = PRESETS.find((p) => p.match.test(id))
   return hit ? { ...hit.params } : { ...GENERIC_DEFAULTS }
 }
+
+/**
+ * 计算 Max Tokens（输出上限）：
+ * 端点返回的上下文长度（contextLength，如 LM Studio 的 max_context_length）
+ * 优先参与计算——取预设值与「min(8192, contextLength)」的较大者，
+ * 保证未知模型也能从端点数据获得合理默认；端点无数据时用预设兜底。
+ */
+export function maxTokensFor(modelId: string, contextLength?: number): number {
+  const preset = defaultParamsFor(modelId).maxTokens
+  if (contextLength && contextLength > 0) {
+    const fromContext = Math.min(8192, Math.floor(contextLength))
+    return Math.max(preset, fromContext)
+  }
+  return preset
+}

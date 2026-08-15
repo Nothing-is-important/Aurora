@@ -441,6 +441,19 @@ const DOM_AUDIT = `
   await sleep(300)
   out.pluginEditorClosed = !document.querySelector('[data-plugin-editor]')
 
+  // 动态模型参数：点击测试连接（SMOKE 分支返回带上下文长度的假列表）
+  // → 点击第一个模型（smoke-model-128k）→ 主进程断言 DB 中 Max Tokens 自动计算
+  const testConnBtn = document.querySelector('[data-test-conn]')
+  if (testConnBtn) testConnBtn.click()
+  await sleep(500)
+  out.fetchedModelsShown = document.querySelectorAll('[data-fetched-model]').length
+  out.fetchedContextBadge = !!(
+    document.querySelector('[data-fetched-models]')?.textContent ?? ''
+  ).includes('上下文')
+  const firstFetched = document.querySelector('[data-fetched-model]')
+  if (firstFetched) firstFetched.click()
+  await sleep(400)
+
   // 动态插件（DPS）区块
   out.pluginRows = document.querySelectorAll('[data-plugin-row]').length
   out.pluginRunning = Array.from(document.querySelectorAll('[data-plugin-status]')).some(
@@ -1105,6 +1118,16 @@ async function runSmoke(w: BrowserWindow, errors: string[]): Promise<void> {
   if (dom.pluginEditorTestBtn !== true || dom.pluginEditorSaveBtn !== true)
     failures.push('插件编辑器按钮缺失')
   if (dom.pluginEditorClosed !== true) failures.push('插件编辑弹层未关闭')
+  if (dom.fetchedModelsShown !== 2)
+    failures.push(`动态模型列表未展示: ${dom.fetchedModelsShown}`)
+  if (dom.fetchedContextBadge !== true) failures.push('上下文长度徽标缺失')
+  // 动态参数链路断言：smoke-model-128k 的 Max Tokens 应自动计算为 8192
+  const fetchedRow = listModels().find((m) => m.id === 'smoke-model-128k')
+  if (!fetchedRow || fetchedRow.maxTokens !== 8192)
+    failures.push(
+      `端点上下文动态参数失效: ${fetchedRow ? fetchedRow.maxTokens : '未入库'}`,
+    )
+  if (fetchedRow) deleteModel('smoke-model-128k')
   if (dom.pluginRows < 1) failures.push(`设置弹窗插件列表缺失: ${dom.pluginRows}`)
   if (dom.pluginRunning !== true) failures.push('示例插件未处于运行状态')
   if (dom.settingsClosed !== true) failures.push('设置弹窗未关闭')
@@ -1524,6 +1547,17 @@ ipcMain.handle('dialog:pickFiles', async () => {
 
 // ---- 模型连接测试 ----
 ipcMain.handle('models:test', async (_e, m) => {
+  // 冒烟分支：返回带上下文长度的假模型列表，验证动态参数链路
+  if (SMOKE) {
+    return {
+      ok: true,
+      models: 2,
+      modelIds: [
+        { id: 'smoke-model-128k', contextLength: 131072 },
+        { id: 'deepseek-reasoner', contextLength: 65536 },
+      ],
+    }
+  }
   try {
     const ac = new AbortController()
     const timer = setTimeout(() => ac.abort(), 8000)
@@ -1536,12 +1570,23 @@ ipcMain.handle('models:test', async (_e, m) => {
     clearTimeout(timer)
     if (res.ok) {
       const j = (await res.json().catch(() => null)) as {
-        data?: { id?: string }[]
+        data?: {
+          id?: string
+          // LM Studio / 部分兼容端点提供的上下文长度字段
+          max_context_length?: number
+          context_length?: number
+        }[]
       } | null
       const modelIds = Array.isArray(j?.data)
         ? j.data
-            .map((x) => String(x?.id ?? ''))
-            .filter(Boolean)
+            .map((x) => {
+              const ctx = x?.max_context_length ?? x?.context_length
+              return {
+                id: String(x?.id ?? '').trim(),
+                contextLength: typeof ctx === 'number' && ctx > 0 ? ctx : undefined,
+              }
+            })
+            .filter((x) => x.id)
             .slice(0, 100)
         : []
       return {

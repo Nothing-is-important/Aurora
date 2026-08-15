@@ -81,7 +81,7 @@ export interface ConnectionTestResult {
   ok: boolean
   message?: string
   models?: number | null
-  modelIds?: string[]
+  modelIds?: { id: string; contextLength?: number }[]
 }
 
 export interface McpServerConfig {
