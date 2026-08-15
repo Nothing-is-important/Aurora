@@ -106,6 +106,19 @@ function extractZip(zip, target) {
   })
 }
 
+/** 仅校验内容哨兵（不看版本标记）：共享目录跨应用复用判断用 */
+function runtimeSentinelsOk(dir) {
+  const sentinels = [
+    join(dir, 'node.exe'),
+    join(dir, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js'),
+    join(dir, 'node_modules', '@deepseek-ai', 'dsh-app-boot', 'lib', 'index.js'),
+    join(dir, 'node_modules', '@deepseek-ai', 'dsh-agent', 'lib', 'index.js'),
+    join(dir, 'node_modules', '@deepseek-ai', 'dsh-llm', 'lib', 'index.js'),
+    join(dir, 'node_modules', '@deepseek-ai', 'cordis-plugin-loader', 'lib', 'index.js'),
+  ]
+  return sentinels.every((p) => existsSync(p))
+}
+
 /** 确保内置运行时可用：有效则复用；否则清掉损坏目录并重新解压 zip。 */
 async function ensureRuntime(version) {
   const dir = runtimeDir()
@@ -113,11 +126,26 @@ async function ensureRuntime(version) {
     setExtractedRuntimeDir(dir)
     return true
   }
+  // 版本标记不匹配但内容完好：两应用共享同一运行时目录（同内容 zip），
+  // 更新标记直接复用，避免破坏性重解压（目录可能被另一实例占用）。
+  if (runtimeSentinelsOk(dir)) {
+    try {
+      writeFileSync(join(dir, '.version'), version, 'utf8')
+    } catch {
+      /* 标记写不进也可用 */
+    }
+    setExtractedRuntimeDir(dir)
+    return true
+  }
   const zip = runtimeZipPath()
   if (!zip) return false
   publishState({ phase: 'starting', message: '正在修复/解压内置运行时（约一分钟）…' })
   // 直接删除运行时目录本体是安全的（home 里的符号链接指向它，不反向）
-  rmSync(dir, { recursive: true, force: true })
+  try {
+    rmSync(dir, { recursive: true, force: true })
+  } catch (err) {
+    console.warn('[aurora-dsh] runtime dir cleanup failed (ignored):', err.message)
+  }
   const tmp = `${dir}.tmp-${process.pid}`
   rmSync(tmp, { recursive: true, force: true })
   mkdirSync(tmp, { recursive: true })
@@ -129,7 +157,7 @@ async function ensureRuntime(version) {
     // 另一实例抢先完成：丢弃本次解压
     rmSync(tmp, { recursive: true, force: true })
   }
-  if (runtimeValid(dir, version)) {
+  if (runtimeSentinelsOk(dir)) {
     setExtractedRuntimeDir(dir)
     return true
   }

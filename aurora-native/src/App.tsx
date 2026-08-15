@@ -18,6 +18,11 @@ export default function App() {
     const saved = localStorage.getItem(THEME_KEY)
     return saved === 'light' ? 'light' : 'dark'
   })
+  const [version, setVersion] = useState('')
+
+  useEffect(() => {
+    void window.aurora.app.version().then(setVersion)
+  }, [])
 
   useEffect(() => {
     document.documentElement.classList.toggle('dark', theme === 'dark')
@@ -71,7 +76,7 @@ export default function App() {
   return (
     <div className="relative z-10 flex h-full flex-col">
       <div className="bg-orbs" aria-hidden />
-      <TitleBar title="Aurora" />
+      <TitleBar title={`Aurora${version ? ` v${version}` : ''}`} />
       <div className="relative z-10 flex min-h-0 flex-1">
         <Sidebar
           sessions={chat.sessions}

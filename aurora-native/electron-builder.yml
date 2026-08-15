@@ -1,0 +1,27 @@
+appId: com.aurora.native
+productName: Aurora
+directories:
+  output: ../release/aurora
+files:
+  - electron/**/*.mjs
+  - electron/**/*.cjs
+  - dist/**/*
+  - package.json
+extraResources:
+  # 内置 dsh 运行时 = 单个 zip（node.exe + node_modules）：首启解压到
+  # %LOCALAPPDATA%\Aurora DSH\runtime（与 Aurora DSH 壳客户端共享）。
+  - from: assets/dsh-runtime.zip
+    to: dsh-runtime.zip
+electronVersion: 43.4.0
+afterPack: scripts/after-pack.cjs
+win:
+  target:
+    - nsis
+  icon: assets/icon.ico
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Aurora
+  artifactName: Aurora-Setup-${version}.${ext}

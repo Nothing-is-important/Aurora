@@ -1,7 +1,18 @@
 // Aurora 原生客户端主进程：进程内 DSH 引擎 + IPC 桥接（会话/流式/工具事件）
-import { app, BrowserWindow, ipcMain, Menu, globalShortcut, dialog } from 'electron'
+import {
+  app,
+  BrowserWindow,
+  ipcMain,
+  Menu,
+  globalShortcut,
+  dialog,
+  Tray,
+  nativeImage,
+  screen,
+} from 'electron'
 import { randomUUID } from 'node:crypto'
-import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync, existsSync, rmSync, renameSync, appendFileSync } from 'node:fs'
+import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { join } from 'node:path'
 import { bootEngine, disposeEngine, runtimeDir } from './engine.mjs'
@@ -13,6 +24,29 @@ const SMOKE = process.env.SMOKE === '1'
 // 独立 userData：不与 main 分支 Aurora（%APPDATA%\aurora）共享存储
 app.setPath('userData', join(app.getPath('appData'), 'aurora-native'))
 
+if (SMOKE) {
+  // 打包后的 GUI 进程无控制台：把日志镜像到文件供驱动断言
+  const smokeLogFile = join(app.getPath('userData'), 'smoke-app.log')
+  const mirror = (level) => (...args) => {
+    try {
+      const line = args.map((a) => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ')
+      appendFileSync(smokeLogFile, `${new Date().toISOString()} ${level} ${line}\n`, 'utf8')
+    } catch {
+      /* 日志失败不影响审计 */
+    }
+  }
+  const origLog = console.log.bind(console)
+  const origErr = console.error.bind(console)
+  console.log = (...args) => {
+    origLog(...args)
+    mirror('LOG')(...args)
+  }
+  console.error = (...args) => {
+    origErr(...args)
+    mirror('ERR')(...args)
+  }
+}
+
 const DEV_URL = process.env.AURORA_DEV_URL ?? null // vite dev server（可选）
 
 let win = null
@@ -22,6 +56,90 @@ let bootUrl = null
 let activeDshHome = null
 let panelAgentHandle = null
 let kb = null
+let tray = null
+let stateSaver = null
+
+// ---------- 单实例 ----------
+if (!app.requestSingleInstanceLock()) {
+  app.quit()
+}
+app.on('second-instance', () => {
+  if (win) {
+    if (!win.isVisible()) win.show()
+    win.focus()
+  }
+})
+
+// ---------- 内置运行时（dsh-runtime.zip → %LOCALAPPDATA%，首启解压/自愈） ----------
+function runtimeZipPath() {
+  const packaged = process.resourcesPath ? join(process.resourcesPath, 'dsh-runtime.zip') : null
+  if (packaged && existsSync(packaged)) return packaged
+  const dev = join(__dirname, '..', 'assets', 'dsh-runtime.zip')
+  return existsSync(dev) ? dev : null
+}
+
+function runtimeSentinelsOk(dir) {
+  const sentinels = [
+    join(dir, 'node.exe'),
+    join(dir, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js'),
+    join(dir, 'node_modules', '@deepseek-ai', 'dsh-app-boot', 'lib', 'index.js'),
+    join(dir, 'node_modules', '@deepseek-ai', 'dsh-agent', 'lib', 'index.js'),
+    join(dir, 'node_modules', '@deepseek-ai', 'dsh-llm', 'lib', 'index.js'),
+    join(dir, 'node_modules', '@deepseek-ai', 'cordis-plugin-loader', 'lib', 'index.js'),
+  ]
+  return sentinels.every((p) => existsSync(p))
+}
+
+function runtimeValid(dir, version) {
+  try {
+    if (readFileSync(join(dir, '.version'), 'utf8').trim() !== version) return false
+  } catch {
+    return false
+  }
+  return runtimeSentinelsOk(dir)
+}
+
+function extractZip(zip, target) {
+  return new Promise((resolve, reject) => {
+    const child = spawn('tar', ['-x', '-f', zip, '-C', target], { windowsHide: true, stdio: 'ignore' })
+    child.on('exit', (code) => (code === 0 ? resolve() : reject(new Error(`解压失败 (tar exit ${code})`))))
+    child.on('error', (err) => reject(err))
+  })
+}
+
+async function ensureRuntime(version) {
+  const dir = runtimeDir()
+  if (runtimeValid(dir, version)) return true
+  // 版本标记不匹配但内容完好：两应用共享同一运行时目录（同内容 zip），
+  // 直接更新标记复用，不做破坏性重解压（目录可能被另一实例占用）。
+  if (runtimeSentinelsOk(dir)) {
+    try {
+      writeFileSync(join(dir, '.version'), version, 'utf8')
+    } catch {
+      /* 标记写不进也可用 */
+    }
+    return true
+  }
+  const zip = runtimeZipPath()
+  if (!zip) return false
+  console.log('[aurora-native] extracting runtime to', dir)
+  try {
+    rmSync(dir, { recursive: true, force: true })
+  } catch (err) {
+    console.warn('[aurora-native] runtime dir cleanup failed (ignored):', err.message)
+  }
+  const tmp = `${dir}.tmp-${process.pid}`
+  rmSync(tmp, { recursive: true, force: true })
+  mkdirSync(tmp, { recursive: true })
+  await extractZip(zip, tmp)
+  writeFileSync(join(tmp, '.version'), version, 'utf8')
+  try {
+    renameSync(tmp, dir)
+  } catch {
+    rmSync(tmp, { recursive: true, force: true })
+  }
+  return runtimeSentinelsOk(dir)
+}
 
 /** 知识库工具注入：在每次 agent 创建/恢复的 setup 里注册进该 agent 作用域 */
 function kbSetup(agentCtx) {
@@ -437,10 +555,29 @@ function registerBridge() {
 }
 
 // ---------- 窗口 ----------
+function windowStateOrDefault() {
+  const saved = appSettings.windowState
+  if (!saved || typeof saved.width !== 'number') return null
+  try {
+    const area = screen
+      .getDisplayMatching({ x: saved.x ?? 0, y: saved.y ?? 0, width: saved.width, height: saved.height })
+      .workArea
+    const x = saved.x ?? area.x
+    const y = saved.y ?? area.y
+    if (x > area.x + area.width - 80 || y > area.y + area.height - 80) return null
+  } catch {
+    return null
+  }
+  return saved
+}
+
 function createWindow() {
+  const saved = windowStateOrDefault()
   win = new BrowserWindow({
-    width: 1280,
-    height: 840,
+    width: saved?.width ?? 1280,
+    height: saved?.height ?? 840,
+    x: saved?.x,
+    y: saved?.y,
     minWidth: 900,
     minHeight: 600,
     frame: false,
@@ -455,10 +592,36 @@ function createWindow() {
       sandbox: true,
     },
   })
-  win.once('ready-to-show', () => win.show())
+  if (saved?.maximized) win.maximize()
+  win.once('ready-to-show', () => {
+    if (!(appSettings.startHidden === true) || SMOKE) win.show()
+  })
+  win.on('close', (e) => {
+    // 关闭 = 隐藏到托盘（托盘存在时）；退出走托盘菜单/应用退出
+    if (!quitting && tray && appSettings.closeToTray !== false) {
+      e.preventDefault()
+      win.hide()
+    }
+  })
   win.on('closed', () => {
     win = null
   })
+  const persistState = () => {
+    if (!win || win.isDestroyed()) return
+    const b = win.getBounds()
+    appSettings.windowState = { ...b, maximized: win.isMaximized() }
+    saveAppSettings()
+  }
+  win.on('resize', () => {
+    clearTimeout(stateSaver)
+    stateSaver = setTimeout(persistState, 600)
+  })
+  win.on('move', () => {
+    clearTimeout(stateSaver)
+    stateSaver = setTimeout(persistState, 600)
+  })
+  win.on('maximize', persistState)
+  win.on('unmaximize', persistState)
   const load = () => {
     if (DEV_URL) {
       void win.loadURL(DEV_URL)
@@ -467,6 +630,65 @@ function createWindow() {
     }
   }
   load()
+}
+
+// ---------- 托盘 ----------
+function makeTrayIcon() {
+  const png = join(__dirname, '..', 'assets', 'icon.png')
+  let img = nativeImage.createFromPath(png)
+  if (img.isEmpty()) {
+    img = nativeImage.createFromDataURL(
+      'data:image/svg+xml;base64,' +
+        Buffer.from(
+          `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><rect width="32" height="32" rx="8" fill="#0a84ff"/><text x="16" y="22" font-size="14" font-weight="700" fill="#fff" text-anchor="middle">A</text></svg>`,
+        ).toString('base64'),
+    )
+  }
+  return img.resize({ width: 16, height: 16 })
+}
+
+function createTray() {
+  if (tray) return
+  tray = new Tray(makeTrayIcon())
+  tray.setToolTip('Aurora · DeepSeek Harness 原生客户端')
+  const menu = Menu.buildFromTemplate([
+    {
+      label: '显示窗口',
+      click: () => {
+        if (!win) createWindow()
+        win.show()
+        win.focus()
+      },
+    },
+    { label: '隐藏窗口', click: () => win?.hide() },
+    { type: 'separator' },
+    {
+      label: '关闭时最小化到托盘',
+      type: 'checkbox',
+      checked: appSettings.closeToTray !== false,
+      click: (item) => {
+        appSettings.closeToTray = item.checked
+        saveAppSettings()
+      },
+    },
+    {
+      label: '启动时最小化到托盘',
+      type: 'checkbox',
+      checked: appSettings.startHidden === true,
+      click: (item) => {
+        appSettings.startHidden = item.checked
+        saveAppSettings()
+      },
+    },
+    { type: 'separator' },
+    { label: '退出', click: () => app.quit() },
+  ])
+  tray.setContextMenu(menu)
+  tray.on('double-click', () => {
+    if (!win) createWindow()
+    win.show()
+    win.focus()
+  })
 }
 
 // ---------- 启动 ----------
@@ -485,10 +707,13 @@ app.whenReady().then(async () => {
     const dshHome = (appSettings.dshHome && String(appSettings.dshHome).trim()) || join(app.getPath('userData'), 'dsh-home')
     activeDshHome = dshHome
     mkdirSync(dshHome, { recursive: true })
+    // 内置运行时：首启解压 / 损坏自愈（哨兵校验）
+    await ensureRuntime(app.getVersion())
     const booted = await bootEngine(dshHome)
     ctx = booted.ctx
     bootUrl = booted.url
     kb = new KnowledgeBase(join(app.getPath('userData'), 'kb'))
+    createTray()
     console.log('[aurora-native] engine booted', bootUrl ? `(web at ${bootUrl})` : '(headless)', 'home =', dshHome)
     registerBridge()
     createWindow()
@@ -665,6 +890,23 @@ async function runSmoke() {
     ok('kbToolRegistered', kbSchemas.some((s) => s.name === 'kb_search'), kbSchemas.map((s) => s.name))
     kb.remove(kbDir)
 
+    // 托盘 + 窗口状态持久化 + 版本显示
+    ok('trayCreated', !!tray)
+    try {
+      win.setBounds({ x: 160, y: 100, width: 1180, height: 760 })
+      await sleep(900)
+      const actual = win.getBounds()
+      const st = appSettings.windowState
+      ok(
+        'windowStateSaved',
+        st && st.x === actual.x && st.y === actual.y && st.width === actual.width && st.height === actual.height,
+        { saved: st, actual },
+      )
+    } catch (err) {
+      ok('windowStateSaved', false, String(err))
+    }
+    ok('versionReported', typeof app.getVersion() === 'string' && app.getVersion().length > 0, app.getVersion())
+
     // 渲染层加载
     await sleep(3000)
     ok('windowLoaded', win && win.webContents.getURL().length > 0, win?.webContents.getURL())
@@ -792,5 +1034,12 @@ app.on('before-quit', () => {
 })
 app.on('will-quit', () => {
   globalShortcut.unregisterAll()
+  if (tray) {
+    tray.destroy()
+    tray = null
+  }
   if (ctx) void disposeEngine()
 })
+
+// ---------- 版本信息 ----------
+ipcMain.handle('app:version', () => app.getVersion())

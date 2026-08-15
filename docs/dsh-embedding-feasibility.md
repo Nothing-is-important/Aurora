@@ -1,14 +1,14 @@
 # Aurora × DeepSeek Harness 嵌入可行性报告（Route 1 PoC）
 
 > 结论先行：**可行，PoC 已跑通**。Aurora 以「原生本地客户端」形态包裹 `dsh web`，
-> 官方 Web 界面完整渲染在 Electron 无边框窗口中（见 `poc-dsh/shell/poc-screenshot.png`
-> 与 `poc-dsh/shell/main.mjs`）。本报告给出架构依据、两种嵌入路线的取舍、风险清单与落地路线图。
+> 官方 Web 界面完整渲染在 Electron 无边框窗口中（见 `dsh-shell/poc-screenshot.png`
+> 与 `dsh-shell/main.mjs`）。本报告给出架构依据、两种嵌入路线的取舍、风险清单与落地路线图。
 
 ---
 
 ## 1. PoC 验证结果（已实测通过）
 
-在 `dsh-native` 分支的 `poc-dsh/shell/` 下实现并跑通（`electron poc-dsh/shell --smoke` 退出码 0）：
+在 `dsh-native` 分支的 `dsh-shell/` 下实现并跑通（`electron dsh-shell --smoke` 退出码 0）：
 
 | 验证项 | 结果 |
 | --- | --- |

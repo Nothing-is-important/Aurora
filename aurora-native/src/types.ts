@@ -104,6 +104,9 @@ declare global {
         toggleMaximize: () => void
         close: () => void
       }
+      app: {
+        version: () => Promise<string>
+      }
     }
   }
 }

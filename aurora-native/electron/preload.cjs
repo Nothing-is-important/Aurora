@@ -53,4 +53,7 @@ contextBridge.exposeInMainWorld('aurora', {
     toggleMaximize: () => ipcRenderer.send('win:toggle-maximize'),
     close: () => ipcRenderer.send('win:close'),
   },
+  app: {
+    version: () => ipcRenderer.invoke('app:version'),
+  },
 })

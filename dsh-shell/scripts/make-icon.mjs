@@ -1,7 +1,7 @@
 // 生成应用图标：SVG → 离屏渲染 → 多尺寸 PNG → 自打包 ICO（PNG-in-ICO，Win10+）
 // 不依赖 electron-builder 的 png→ico 转换（其转换会把全幅图标做成透明角）。
 import { app, BrowserWindow, nativeImage } from 'electron'
-import { writeFileSync, mkdirSync } from 'node:fs'
+import { writeFileSync, mkdirSync, existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { join, dirname } from 'node:path'
 
@@ -51,17 +51,26 @@ function packIco(frames) {
 }
 
 app.whenReady().then(async () => {
-  const win = new BrowserWindow({
-    width: 256,
-    height: 256,
-    show: false,
-    frame: false,
-    useContentSize: true,
-    webPreferences: { offscreen: true },
-  })
-  await win.loadURL('data:text/html;base64,' + Buffer.from(html).toString('base64'))
-  await new Promise((r) => setTimeout(r, 500))
-  const master = await win.webContents.capturePage()
+  // 优先复用现有 icon.png（Aurora 官方图标）；否则离屏渲染 SVG 生成
+  const existingPng = join(__dirname, '..', 'assets', 'icon.png')
+  let master = null
+  if (existsSync(existingPng)) {
+    master = nativeImage.createFromPath(existingPng)
+  }
+  if (!master || master.isEmpty()) {
+    const win = new BrowserWindow({
+      width: 256,
+      height: 256,
+      show: false,
+      frame: false,
+      useContentSize: true,
+      webPreferences: { offscreen: true },
+    })
+    await win.loadURL('data:text/html;base64,' + Buffer.from(html).toString('base64'))
+    await new Promise((r) => setTimeout(r, 500))
+    master = await win.webContents.capturePage()
+    win.destroy()
+  }
   if (master.isEmpty()) {
     console.error('icon render failed: empty image')
     app.exit(1)
