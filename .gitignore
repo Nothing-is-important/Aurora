@@ -33,3 +33,7 @@ dsh-shell/.runtime-staging/
 aurora-native/smoke-run.log
 aurora-native/build.log
 aurora-native/assets/dsh-runtime.zip
+
+release-push.log
+push-retry.log
+push-main.log
