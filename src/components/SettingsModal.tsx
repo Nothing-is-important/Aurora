@@ -59,6 +59,8 @@ export default function SettingsModal({
     models?: number | null
   } | null>(null)
   const [saving, setSaving] = useState(false)
+  /** 未保存的新模型草稿（点击 + 后立即出现在左侧列表，带「未保存」徽标） */
+  const [draftModel, setDraftModel] = useState<ModelConfig | null>(null)
   const [sysPrompt, setSysPrompt] = useState('')
   const [sysSaved, setSysSaved] = useState(false)
   const [whitelistText, setWhitelistText] = useState('')
@@ -175,12 +177,21 @@ export default function SettingsModal({
   }
 
   useEffect(() => {
-    if (open && models.length > 0 && !models.find((m) => m.id === selectedId)) {
+    if (!open) {
+      // 关闭弹窗时丢弃未保存草稿
+      setDraftModel(null)
+      return
+    }
+    if (
+      models.length > 0 &&
+      !models.find((m) => m.id === selectedId) &&
+      selectedId !== draftModel?.id
+    ) {
       const first = models.find((m) => m.provider !== 'mock') ?? models[0]
       selectModel(first)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, models])
+  }, [open, models, draftModel?.id])
 
   useEffect(() => {
     if (open) {
@@ -212,17 +223,31 @@ export default function SettingsModal({
     setSaving(true)
     await window.aurora.models.save(form)
     setSaving(false)
+    if (draftModel && draftModel.id === selectedId) {
+      // 草稿转正：清除临时条目，列表刷新后自动选中正式条目
+      setDraftModel(null)
+      setSelectedId(form.id)
+    }
     onChanged()
   }
 
   const addNew = (): void => {
     const m = emptyModel()
+    setDraftModel(m)
     setSelectedId(m.id)
     setForm(m)
     setTestResult(null)
   }
 
   const remove = async (): Promise<void> => {
+    if (draftModel && draftModel.id === selectedId) {
+      // 删除未保存草稿：直接丢弃，回到已保存列表第一项
+      setDraftModel(null)
+      setForm(models[0] ?? emptyModel())
+      setSelectedId(models[0]?.id ?? '')
+      setTestResult(null)
+      return
+    }
     if (form.provider === 'mock') return
     await window.aurora.models.remove(form.id)
     setSelectedId('')
@@ -273,6 +298,7 @@ export default function SettingsModal({
               </span>
               <button
                 onClick={addNew}
+                data-settings-add
                 title="添加模型"
                 className="flex h-6 w-6 items-center justify-center rounded-md text-black/45 transition-colors hover:bg-black/[0.06] hover:text-apple-blue dark:text-white/45 dark:hover:bg-white/[0.08]"
               >
@@ -320,6 +346,46 @@ export default function SettingsModal({
                   )}
                 </button>
               ))}
+              {/* 未保存的新模型草稿：加号后立即出现，带醒目徽标 */}
+              {draftModel && (
+                <button
+                  key={draftModel.id}
+                  data-settings-model
+                  onClick={() => selectModel(draftModel)}
+                  className={`flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left transition-colors ${
+                    draftModel.id === selectedId
+                      ? 'bg-apple-blue/10 dark:bg-apple-blue/20'
+                      : 'hover:bg-black/[0.04] dark:hover:bg-white/[0.06]'
+                  }`}
+                >
+                  <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-apple-orange" />
+                  <span className="min-w-0 flex-1">
+                    <span
+                      className={`block truncate text-[12.5px] font-medium ${
+                        draftModel.id === selectedId
+                          ? 'text-apple-blue dark:text-[#7ab8ff]'
+                          : 'text-black/75 dark:text-white/75'
+                      }`}
+                    >
+                      {form.name.trim() || '新模型'}
+                    </span>
+                    <span className="flex items-center gap-1 text-[10.5px] text-apple-orange">
+                      <span
+                        data-unsaved-badge
+                        className="rounded bg-apple-orange/15 px-1 py-px font-medium"
+                      >
+                        未保存
+                      </span>
+                      <span className="truncate text-black/35 dark:text-white/35">
+                        {form.provider === 'mock' ? '本地 Mock' : form.modelId || '待配置'}
+                      </span>
+                    </span>
+                  </span>
+                  {draftModel.id === selectedId && (
+                    <Check size={12} strokeWidth={2.6} className="shrink-0 text-apple-blue" />
+                  )}
+                </button>
+              )}
             </div>
           </div>
 
@@ -744,6 +810,7 @@ export default function SettingsModal({
                     </button>
                     <button
                       onClick={remove}
+                      data-model-remove
                       className="ml-auto flex h-9 items-center gap-1.5 rounded-xl px-3.5 text-[13px] font-medium text-apple-red/80 transition-colors hover:bg-apple-red/10"
                     >
                       <Trash2 size={13} />

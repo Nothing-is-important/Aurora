@@ -377,6 +377,24 @@ const DOM_AUDIT = `
   out.settingsProxyInput = !!document.querySelector('[data-proxy-input]')
   out.openDataDirBtn = !!document.querySelector('[data-open-datadir]')
   out.appVersion = (document.querySelector('[data-app-version]') || {}).textContent || ''
+
+  // 添加新模型草稿流程：加号 → 未保存条目 → 删除恢复
+  const addBtn = document.querySelector('[data-settings-add]')
+  if (addBtn) addBtn.click()
+  await sleep(350)
+  out.draftBadge = !!document.querySelector('[data-unsaved-badge]')
+  const draftItem = Array.from(document.querySelectorAll('[data-settings-model]')).find(
+    (b) => (b.textContent || '').includes('未保存')
+  )
+  out.draftItemVisible = !!draftItem
+  out.draftActive = draftItem
+    ? draftItem.className.includes('bg-apple-blue')
+    : false
+  const removeBtn = document.querySelector('[data-model-remove]')
+  if (removeBtn) removeBtn.click()
+  await sleep(350)
+  out.draftCleared = !document.querySelector('[data-unsaved-badge]')
+
   const closeSettings = document.querySelector('button[aria-label="关闭设置"]')
   if (closeSettings) closeSettings.click()
   await sleep(350)
@@ -949,6 +967,11 @@ async function runSmoke(w: BrowserWindow, errors: string[]): Promise<void> {
   if (dom.openDataDirBtn !== true) failures.push('打开数据目录按钮缺失')
   if (!String(dom.appVersion).startsWith('v0.1'))
     failures.push(`版本号显示异常: ${dom.appVersion}`)
+  // 添加模型草稿断言
+  if (dom.draftBadge !== true) failures.push('「未保存」徽标未出现')
+  if (dom.draftItemVisible !== true) failures.push('草稿条目未出现在模型列表')
+  if (dom.draftActive !== true) failures.push('草稿条目未被高亮选中')
+  if (dom.draftCleared !== true) failures.push('草稿删除未生效')
   if (dom.settingsClosed !== true) failures.push('设置弹窗未关闭')
   // 导出验证
   const ev = exportVerified as {

@@ -31,12 +31,37 @@ const EMPTY: Record<Tab, { title: string; desc: string }> = {
   },
   refs: {
     title: '暂无引用',
-    desc: '知识库检索到的文档片段会显示在这里',
+    desc: '联网搜索与网页抓取得到的来源会显示在这里',
   },
   info: {
-    title: '会话信息',
-    desc: '模型、Token 用量与统计信息会显示在这里',
+    title: '暂无会话信息',
+    desc: '选中一个会话后，模型、Token 用量与统计信息会显示在这里',
   },
+}
+
+/** 空态占位：三个 tab 完全一致的布局与固定行高，保证切换时提示位置不抖动 */
+function EmptyState({
+  icon,
+  title,
+  desc,
+}: {
+  icon: React.ReactNode
+  title: string
+  desc: string
+}) {
+  return (
+    <div className="flex flex-1 flex-col items-center justify-center gap-2.5 px-8 pb-16 text-center">
+      <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-black/[0.04] text-black/25 dark:bg-white/[0.07] dark:text-white/30">
+        {icon}
+      </div>
+      <p className="text-[13px] font-medium text-black/60 dark:text-white/60">
+        {title}
+      </p>
+      <p className="line-clamp-2 min-h-[2.6em] text-[12px] leading-relaxed text-black/35 dark:text-white/35">
+        {desc}
+      </p>
+    </div>
+  )
 }
 
 interface InspectorPanelProps {
@@ -123,7 +148,7 @@ export default function InspectorPanel({
     )
   }
 
-  const empty = EMPTY[tab]
+  // (空态统一由 EmptyState 组件渲染)
 
   return (
     <aside
@@ -347,17 +372,11 @@ export default function InspectorPanel({
               ))}
           </div>
         ) : (
-          <div className="flex flex-1 flex-col items-center justify-center gap-2.5 px-8 pb-16 text-center">
-            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-black/[0.04] text-black/25 dark:bg-white/[0.07] dark:text-white/30">
-              <Wrench size={19} strokeWidth={1.8} />
-            </div>
-            <p className="text-[13px] font-medium text-black/60 dark:text-white/60">
-              暂无工具调用
-            </p>
-            <p className="text-[12px] leading-relaxed text-black/35 dark:text-white/35">
-              对话中 Agent 执行的文件、代码、搜索等步骤会显示在这里
-            </p>
-          </div>
+          <EmptyState
+            icon={<Wrench size={19} strokeWidth={1.8} />}
+            title={EMPTY.tools.title}
+            desc={EMPTY.tools.desc}
+          />
         )
       ) : tab === 'refs' ? (
         allRefs.length > 0 ? (
@@ -385,30 +404,18 @@ export default function InspectorPanel({
             ))}
           </div>
         ) : (
-          <div className="flex flex-1 flex-col items-center justify-center gap-2.5 px-8 pb-16 text-center">
-            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-black/[0.04] text-black/25 dark:bg-white/[0.07] dark:text-white/30">
-              <Link2 size={19} strokeWidth={1.8} />
-            </div>
-            <p className="text-[13px] font-medium text-black/60 dark:text-white/60">
-              暂无引用
-            </p>
-            <p className="text-[12px] leading-relaxed text-black/35 dark:text-white/35">
-              联网搜索与网页抓取得到的来源会显示在这里
-            </p>
-          </div>
+          <EmptyState
+            icon={<Link2 size={19} strokeWidth={1.8} />}
+            title={EMPTY.refs.title}
+            desc={EMPTY.refs.desc}
+          />
         )
       ) : (
-        <div className="flex flex-1 flex-col items-center justify-center gap-2.5 px-8 pb-16 text-center">
-          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-black/[0.04] text-black/25 dark:bg-white/[0.07] dark:text-white/30">
-            <Info size={19} strokeWidth={1.8} />
-          </div>
-          <p className="text-[13px] font-medium text-black/60 dark:text-white/60">
-            {empty.title}
-          </p>
-          <p className="text-[12px] leading-relaxed text-black/35 dark:text-white/35">
-            {empty.desc}
-          </p>
-        </div>
+        <EmptyState
+          icon={<Info size={19} strokeWidth={1.8} />}
+          title={EMPTY.info.title}
+          desc={EMPTY.info.desc}
+        />
       )}
     </aside>
   )
