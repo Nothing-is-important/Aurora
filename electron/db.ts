@@ -5,16 +5,27 @@ import * as path from 'path'
 import * as fs from 'fs'
 
 export interface ModelConfig {
+  /** 条目唯一 id = `${providerId}::${modelId}` */
   id: string
+  providerId: string
+  providerName: string
+  providerKind: string
   name: string
-  provider: string
-  baseUrl: string
-  apiKey: string
   modelId: string
   temperature: number
   maxTokens: number
   topP: number
   enabled: boolean
+}
+
+export interface ProviderRow {
+  id: string
+  name: string
+  kind: string
+  baseUrl: string
+  apiKey: string
+  enabled: boolean
+  createdAt: number
 }
 
 let db: Database | null = null
@@ -78,12 +89,19 @@ function migrate(): void {
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
     );
-    CREATE TABLE IF NOT EXISTS models (
+    CREATE TABLE IF NOT EXISTS providers (
       id TEXT PRIMARY KEY,
-      name TEXT NOT NULL,
-      provider TEXT NOT NULL,
+      name TEXT NOT NULL DEFAULT '',
+      kind TEXT NOT NULL DEFAULT 'custom',
       base_url TEXT NOT NULL DEFAULT '',
       api_key TEXT NOT NULL DEFAULT '',
+      enabled INTEGER NOT NULL DEFAULT 1,
+      created_at INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS models (
+      id TEXT PRIMARY KEY,
+      provider_id TEXT NOT NULL DEFAULT '',
+      name TEXT NOT NULL,
       model_id TEXT NOT NULL,
       temperature REAL NOT NULL DEFAULT 1,
       max_tokens INTEGER NOT NULL DEFAULT 4096,
@@ -140,77 +158,232 @@ function migrate(): void {
   alt(`ALTER TABLE messages ADD COLUMN first_token_ms INTEGER NOT NULL DEFAULT 0`)
   alt(`ALTER TABLE messages ADD COLUMN tool_steps_json TEXT NOT NULL DEFAULT ''`)
   alt(`ALTER TABLE conversations ADD COLUMN system_prompt TEXT NOT NULL DEFAULT ''`)
+  alt(`ALTER TABLE models ADD COLUMN provider_id TEXT NOT NULL DEFAULT ''`)
+  alt(`ALTER TABLE models ADD COLUMN base_url TEXT NOT NULL DEFAULT ''`)
+  alt(`ALTER TABLE models ADD COLUMN api_key TEXT NOT NULL DEFAULT ''`)
+  alt(`ALTER TABLE models ADD COLUMN provider TEXT NOT NULL DEFAULT ''`)
+  migrateProviders()
+}
+
+/** 旧单层模型 → 提供商/模型两层：按 base_url+api_key 分组建提供商并回填 */
+function migrateProviders(): void {
+  if (!db) return
+  const provCount = db.exec('SELECT COUNT(*) FROM providers')
+  if (provCount.length && Number(provCount[0].values[0][0]) > 0) return
+  // 读取旧模型行（仍有 base_url 数据且未挂 provider 的）
+  const res = db.exec(
+    `SELECT id,name,provider,base_url,api_key,model_id,temperature,max_tokens,top_p,enabled
+     FROM models WHERE provider_id = ''`,
+  )
+  if (!res.length) return
+  const groups = new Map<string, { kind: string; baseUrl: string; apiKey: string; providerId: string; name: string }>()
+  const providerIdOf = new Map<string, string>()
+  for (const row of res[0].values) {
+    const key = `${String(row[3])}|${String(row[4])}`
+    let g = groups.get(key)
+    if (!g) {
+      const kind = String(row[2]) || 'custom'
+      const baseUrl = String(row[3])
+      g = {
+        kind,
+        baseUrl,
+        apiKey: String(row[4]),
+        providerId: 'prov-' + randomId(),
+        name: providerDisplayName(kind, baseUrl),
+      }
+      groups.set(key, g)
+    }
+    providerIdOf.set(String(row[0]), g.providerId)
+  }
+  for (const g of groups.values()) {
+    db.run(
+      `INSERT INTO providers (id,name,kind,base_url,api_key,enabled,created_at)
+       VALUES (?,?,?,?,?,1,?)`,
+      [g.providerId, g.name, g.kind, g.baseUrl, g.apiKey, Date.now()],
+    )
+  }
+  // 重建模型条目 id（providerId::modelId），回填 provider_id
+  for (const row of res[0].values) {
+    const oldId = String(row[0])
+    const pid = providerIdOf.get(oldId)!
+    const modelId = String(row[5])
+    const newId = `${pid}::${modelId}`
+    db.run(
+      `UPDATE models SET id = ?, provider_id = ? WHERE id = ?`,
+      [newId, pid, oldId],
+    )
+  }
+}
+
+function providerDisplayName(kind: string, baseUrl: string): string {
+  const names: Record<string, string> = {
+    deepseek: 'DeepSeek 官方',
+    openai: 'OpenAI',
+    anthropic: 'Anthropic',
+    grok: 'Grok (xAI)',
+    moonshot: 'Moonshot (Kimi)',
+    zhipu: '智谱 GLM',
+    qwen: '通义千问',
+    ollama: 'Ollama 本地',
+    lmstudio: 'LM Studio 本地',
+    mock: '本地演示（Mock）',
+  }
+  if (names[kind]) return names[kind]
+  if (baseUrl) {
+    try {
+      return new URL(baseUrl).hostname
+    } catch {
+      return baseUrl.slice(0, 24)
+    }
+  }
+  return '自定义提供商'
 }
 
 function seed(): void {
   if (!db) return
-  const r = db.exec('SELECT COUNT(*) AS c FROM models')
+  const r = db.exec('SELECT COUNT(*) AS c FROM providers')
   const count = r.length ? Number(r[0].values[0][0]) : 0
   if (count > 0) return
-  const insert = db.prepare(
-    `INSERT INTO models
-     (id,name,provider,base_url,api_key,model_id,temperature,max_tokens,top_p,enabled,sort)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+  const now = Date.now()
+  const mockId = 'prov-mock'
+  const dsId = 'prov-deepseek'
+  const insP = db.prepare(
+    `INSERT INTO providers (id,name,kind,base_url,api_key,enabled,created_at)
+     VALUES (?,?,?,?,?,1,?)`,
   )
-  insert.run([
-    'mock', '本地演示（Mock）', 'mock', '', '', 'aurora-mock-1',
-    1, 4096, 1, 1, 0,
+  insP.run([mockId, '本地演示（Mock）', 'mock', '', '', now])
+  insP.run([
+    dsId, 'DeepSeek 官方', 'deepseek',
+    'https://api.deepseek.com/v1', '', now,
   ])
-  insert.run([
-    'deepseek-chat', 'DeepSeek Chat', 'deepseek',
-    'https://api.deepseek.com/v1', '', 'deepseek-chat', 1.3, 8192, 1, 1, 1,
+  insP.free()
+  const insM = db.prepare(
+    `INSERT INTO models (id,provider_id,name,model_id,temperature,max_tokens,top_p,enabled,sort)
+     VALUES (?,?,?,?,?,?,?,1,?)`,
+  )
+  insM.run([
+    `${mockId}::aurora-mock-1`, mockId, '本地演示（Mock）', 'aurora-mock-1',
+    1, 4096, 1, 0,
   ])
-  insert.run([
-    'deepseek-reasoner', 'DeepSeek Reasoner', 'deepseek',
-    'https://api.deepseek.com/v1', '', 'deepseek-reasoner', 1.3, 8192, 1, 1, 2,
+  insM.run([
+    `${dsId}::deepseek-chat`, dsId, 'DeepSeek Chat', 'deepseek-chat',
+    1.3, 4096, 1, 1,
   ])
-  insert.free()
+  insM.run([
+    `${dsId}::deepseek-reasoner`, dsId, 'DeepSeek Reasoner', 'deepseek-reasoner',
+    1, 32768, 1, 2,
+  ])
+  insM.free()
 }
 
-// ---- 模型 CRUD ----
+// ---- 提供商 CRUD ----
+type ProvRow = (string | number | Uint8Array | null)[]
+
+function rowToProvider(row: ProvRow): ProviderRow {
+  return {
+    id: String(row[0]),
+    name: String(row[1]),
+    kind: String(row[2]),
+    baseUrl: String(row[3]),
+    apiKey: decryptKey(String(row[4])),
+    enabled: !!row[5],
+    createdAt: Number(row[6]),
+  }
+}
+
+export function listProviders(): ProviderRow[] {
+  if (!db) return []
+  const res = db.exec(
+    `SELECT id,name,kind,base_url,api_key,enabled,created_at
+     FROM providers ORDER BY created_at`,
+  )
+  if (!res.length) return []
+  return res[0].values.map(rowToProvider)
+}
+
+export function getProvider(id: string): ProviderRow | null {
+  return listProviders().find((p) => p.id === id) ?? null
+}
+
+export function saveProvider(p: {
+  id: string
+  name: string
+  kind: string
+  baseUrl: string
+  apiKey: string
+  enabled: boolean
+}): void {
+  if (!db) return
+  db.run(
+    `INSERT INTO providers (id,name,kind,base_url,api_key,enabled,created_at)
+     VALUES (?,?,?,?,?,?,?)
+     ON CONFLICT(id) DO UPDATE SET
+       name=excluded.name, kind=excluded.kind, base_url=excluded.base_url,
+       api_key=excluded.api_key, enabled=excluded.enabled`,
+    [
+      p.id, p.name, p.kind, p.baseUrl, encryptKey(p.apiKey),
+      p.enabled ? 1 : 0, Date.now(),
+    ],
+  )
+  persist()
+}
+
+export function deleteProvider(id: string): void {
+  if (!db) return
+  db.run('DELETE FROM models WHERE provider_id = ?', [id])
+  db.run('DELETE FROM providers WHERE id = ?', [id])
+  persist()
+}
+
+// ---- 模型 CRUD（挂靠提供商）----
 type ModelRow = (string | number | Uint8Array | null)[]
 
 function rowToModel(row: ModelRow): ModelConfig {
   return {
     id: String(row[0]),
-    name: String(row[1]),
-    provider: String(row[2]) as ModelConfig['provider'],
-    baseUrl: String(row[3]),
-    apiKey: decryptKey(String(row[4])),
-    modelId: String(row[5]),
-    temperature: Number(row[6]),
-    maxTokens: Number(row[7]),
-    topP: Number(row[8]),
-    enabled: !!row[9],
+    providerId: String(row[1]),
+    name: String(row[2]),
+    modelId: String(row[3]),
+    temperature: Number(row[4]),
+    maxTokens: Number(row[5]),
+    topP: Number(row[6]),
+    enabled: !!row[7],
+    providerName: String(row[8]),
+    providerKind: String(row[9]),
   }
 }
 
 export function listModels(): ModelConfig[] {
   if (!db) return []
   const res = db.exec(
-    `SELECT id,name,provider,base_url,api_key,model_id,temperature,max_tokens,top_p,enabled
-     FROM models ORDER BY sort, name`,
+    `SELECT m.id,m.provider_id,m.name,m.model_id,m.temperature,m.max_tokens,m.top_p,m.enabled,
+            p.name, p.kind
+     FROM models m LEFT JOIN providers p ON p.id = m.provider_id
+     ORDER BY m.sort, m.name`,
   )
   if (!res.length) return []
   return res[0].values.map(rowToModel)
+}
+
+export function listModelsOfProvider(providerId: string): ModelConfig[] {
+  return listModels().filter((m) => m.providerId === providerId)
 }
 
 export function getModel(id: string): ModelConfig | null {
   return listModels().find((m) => m.id === id) ?? null
 }
 
-export function saveModel(m: ModelConfig): void {
+export function saveModel(m: ModelConfig & { providerId: string }): void {
   if (!db) return
   db.run(
-    `INSERT INTO models (id,name,provider,base_url,api_key,model_id,temperature,max_tokens,top_p,enabled)
-     VALUES (?,?,?,?,?,?,?,?,?,?)
+    `INSERT INTO models (id,provider_id,name,model_id,temperature,max_tokens,top_p,enabled)
+     VALUES (?,?,?,?,?,?,?,?)
      ON CONFLICT(id) DO UPDATE SET
-       name=excluded.name, provider=excluded.provider, base_url=excluded.base_url,
-       api_key=excluded.api_key, model_id=excluded.model_id,
+       name=excluded.name, model_id=excluded.model_id,
        temperature=excluded.temperature, max_tokens=excluded.max_tokens,
        top_p=excluded.top_p, enabled=excluded.enabled`,
     [
-      m.id, m.name, m.provider, m.baseUrl, encryptKey(m.apiKey), m.modelId,
+      m.id, m.providerId, m.name, m.modelId,
       m.temperature, m.maxTokens, m.topP, m.enabled ? 1 : 0,
     ],
   )

@@ -13,8 +13,8 @@ const DEEPSEEK_PRICE: Record<string, ModelPricing> = {
 
 export function pricingFor(model: ModelConfig | undefined): ModelPricing {
   if (!model) return { inputPerM: 0, outputPerM: 0 }
-  if (model.provider === 'mock') return { inputPerM: 1, outputPerM: 2 }
-  if (model.provider === 'deepseek') {
+  if (model.providerKind === 'mock') return { inputPerM: 1, outputPerM: 2 }
+  if (model.providerKind === 'deepseek') {
     return DEEPSEEK_PRICE[model.modelId] ?? { inputPerM: 0, outputPerM: 0 }
   }
   // 兼容端点价格未知

@@ -22,14 +22,19 @@ import {
   deleteConversation,
   deleteMessagesFrom,
   deleteModel,
+  deleteProvider,
   getConversationSystemPrompt,
+  getModel,
+  getProvider,
   getSetting,
   initDb,
   listConversations,
   listMessages,
   listModels,
+  listProviders,
   renameConversation,
   saveModel,
+  saveProvider,
   setConversationPinned,
   setConversationSystemPrompt,
   setSetting,
@@ -1142,12 +1147,12 @@ async function runSmoke(w: BrowserWindow, errors: string[]): Promise<void> {
     failures.push(`动态模型列表未展示: ${dom.fetchedModelsShown}`)
   if (dom.fetchedContextBadge !== true) failures.push('上下文长度徽标缺失')
   // 动态参数链路断言：smoke-model-128k 的 Max Tokens 应自动计算为 8192
-  const fetchedRow = listModels().find((m) => m.id === 'smoke-model-128k')
+  const fetchedRow = listModels().find((m) => m.modelId === 'smoke-model-128k')
   if (!fetchedRow || fetchedRow.maxTokens !== 8192)
     failures.push(
       `端点上下文动态参数失效: ${fetchedRow ? fetchedRow.maxTokens : '未入库'}`,
     )
-  if (fetchedRow) deleteModel('smoke-model-128k')
+  if (fetchedRow) deleteModel(fetchedRow.id)
   if (dom.pluginRows < 1) failures.push(`设置弹窗插件列表缺失: ${dom.pluginRows}`)
   if (dom.pluginRunning !== true) failures.push('示例插件未处于运行状态')
   if (dom.settingsClosed !== true) failures.push('设置弹窗未关闭')
@@ -1333,7 +1338,16 @@ nativeTheme.on('updated', () => {
   win?.webContents.send('theme:system-changed', nativeTheme.shouldUseDarkColors)
 })
 
-// ---- 模型与设置 ----
+// ---- 提供商与模型 ----
+ipcMain.handle('providers:list', () => listProviders())
+ipcMain.handle('providers:save', (_e, p) => {
+  saveProvider(p)
+  return true
+})
+ipcMain.handle('providers:delete', (_e, id: string) => {
+  deleteProvider(id)
+  return true
+})
 ipcMain.handle('models:list', () => listModels())
 ipcMain.handle('models:save', (_e, m) => {
   saveModel(m)
@@ -1565,8 +1579,8 @@ ipcMain.handle('dialog:pickFiles', async () => {
   })
 })
 
-// ---- 模型连接测试 ----
-ipcMain.handle('models:test', async (_e, m) => {
+// ---- 提供商连接测试（返回端点可用模型列表）----
+ipcMain.handle('providers:test', async (_e, m: { baseUrl: string; apiKey: string }) => {
   // 冒烟分支：返回带上下文长度的假模型列表，验证动态参数链路
   if (SMOKE) {
     return {
@@ -1641,7 +1655,13 @@ app.whenReady().then(async () => {
   const backupPath = doAutoBackup()
   bootLog('auto backup: ' + (backupPath ?? 'skipped'))
   trayCreated = createTray()
-  registerChatIpc(listModels)
+  registerChatIpc((modelEntryId: string) => {
+    const model = getModel(modelEntryId)
+    if (!model) return null
+    const provider = getProvider(model.providerId)
+    if (!provider) return null
+    return { model, provider }
+  })
   bootLog('chat ipc registered')
   // 恢复用户配置的 MCP 服务器（冒烟模式由 runSmoke 显式配置）
   if (!SMOKE) {

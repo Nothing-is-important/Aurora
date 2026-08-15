@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { ChatUsage, ModelConfig, PickedFile, ToolStep } from './ipc'
+import type {
+  ChatUsage,
+  ModelConfig,
+  PickedFile,
+  ProviderRow,
+  ToolStep,
+} from './ipc'
 import {
   BUILTIN_MODES,
   loadActiveModeId,
@@ -27,9 +33,11 @@ let smokeNotified = false
 export interface ChatController {
   messages: ChatMessage[]
   models: ModelConfig[]
+  providers: ProviderRow[]
   modelId: string
   setModelId: (id: string) => void
   reloadModels: () => Promise<void>
+  reloadProviders: () => Promise<void>
   modes: ChatMode[]
   modeId: string
   setMode: (id: string) => void
@@ -66,6 +74,7 @@ function smokeLog(op: string, extra?: unknown): void {
 export function useChat(opts: UseChatOptions): ChatController {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [models, setModels] = useState<ModelConfig[]>([])
+  const [providers, setProviders] = useState<ProviderRow[]>([])
   const [modelId, setModelIdState] = useState('')
   const [modes, setModes] = useState<ChatMode[]>(BUILTIN_MODES)
   const [modeId, setModeIdState] = useState('standard')
@@ -228,6 +237,11 @@ export function useChat(opts: UseChatOptions): ChatController {
     setModels(list)
   }, [])
 
+  const reloadProviders = useCallback(async () => {
+    const list = await window.aurora.providers.list()
+    setProviders(list)
+  }, [])
+
   const reloadModes = useCallback(async () => {
     const custom = await loadCustomModes()
     setModes([...BUILTIN_MODES, ...custom])
@@ -238,6 +252,12 @@ export function useChat(opts: UseChatOptions): ChatController {
     void loadActiveModeId().then((id) => setModeIdState(id))
     void reloadModes()
   }, [reloadModes])
+
+  // 加载提供商与模型
+  useEffect(() => {
+    void reloadProviders()
+    void reloadModels()
+  }, [reloadProviders, reloadModels])
 
   const setMode = useCallback((id: string) => {
     setModeIdState(id)
@@ -335,7 +355,7 @@ export function useChat(opts: UseChatOptions): ChatController {
 
         let userContent: string | unknown[]
         // 图片多模态：仅非 DeepSeek 官方端点（官方暂不支持视觉）
-        if (imageFiles.length > 0 && model && model.provider !== 'deepseek') {
+        if (imageFiles.length > 0 && model && model.providerKind !== 'deepseek') {
           userContent = [
             { type: 'text', text: userText },
             ...imageFiles.map((f) => ({
@@ -476,9 +496,11 @@ export function useChat(opts: UseChatOptions): ChatController {
   return {
     messages,
     models,
+    providers,
     modelId,
     setModelId,
     reloadModels,
+    reloadProviders,
     modes,
     modeId,
     setMode,

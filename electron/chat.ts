@@ -1,10 +1,15 @@
 import { BrowserWindow, ipcMain, Notification } from 'electron'
 import type { WebContents } from 'electron'
-import type { ModelConfig } from './db'
+import type { ModelConfig, ProviderRow } from './db'
 import { executeTool, TOOL_DEFS } from './tools'
 import { mcpManager } from './mcp'
 import { pluginManager } from './plugins'
 import { getDispatcher } from './net'
+
+export interface ChatTarget {
+  model: ModelConfig
+  provider: ProviderRow
+}
 
 export interface ApiChatMessage {
   role: string
@@ -47,11 +52,12 @@ export function getSmokeChatRequests(): ChatStartRequest[] {
   return smokeRequests
 }
 
-export function registerChatIpc(getModels: () => ModelConfig[]): void {
+export function registerChatIpc(
+  resolveTarget: (modelId: string) => ChatTarget | null,
+): void {
   ipcMain.on('chat:start', (e, req: ChatStartRequest) => {
     if (process.env.SMOKE === '1') smokeRequests.push(req)
-    const model = getModels().find((m) => m.id === req.modelId)
-    void runChat(e.sender, req, model ?? null)
+    void runChat(e.sender, req, resolveTarget(req.modelId))
   })
   ipcMain.on('chat:stop', (_e, requestId: string) => {
     active.get(requestId)?.abort()
@@ -88,9 +94,9 @@ const MAX_ROUNDS = 6
 async function runChat(
   wc: WebContents,
   req: ChatStartRequest,
-  model: ModelConfig | null,
+  target: ChatTarget | null,
 ): Promise<void> {
-  if (!model) {
+  if (!target) {
     emit(wc, 'chat:error', {
       requestId: req.requestId,
       message: '未找到所选模型',
@@ -104,6 +110,7 @@ async function runChat(
     })
     return
   }
+  const { model, provider } = target
   const ac = new AbortController()
   active.set(req.requestId, ac)
   const startAt = Date.now()
@@ -117,10 +124,10 @@ async function runChat(
     if (lastContentAcc.length > 400) lastContentAcc = lastContentAcc.slice(-300)
   }
   try {
-    if (model.provider !== 'mock' && !model.apiKey) {
+    if (provider.kind !== 'mock' && !provider.apiKey) {
       emit(wc, 'chat:error', {
         requestId: req.requestId,
-        message: `「${model.name}」尚未配置 API Key，请到设置中填写`,
+        message: `「${model.name}」所属提供商尚未配置 API Key，请到设置中填写`,
         aborted: false,
       })
     } else {
@@ -146,9 +153,9 @@ async function runChat(
             : allTools
       for (let round = 0; round < MAX_ROUNDS; round++) {
         const outcome =
-          model.provider === 'mock'
+          provider.kind === 'mock'
             ? await mockCallOnce(wc, req.requestId, ac.signal, messages, onFirstToken, onContent)
-            : await sseCallOnce(wc, req.requestId, model, ac.signal, messages, tools, onFirstToken, onContent)
+            : await sseCallOnce(wc, req.requestId, model, provider, ac.signal, messages, tools, onFirstToken, onContent)
         if (outcome.toolCalls.length === 0 || outcome.finish !== 'tool_calls') {
           break
         }
@@ -262,6 +269,7 @@ async function sseCallOnce(
   wc: WebContents,
   requestId: string,
   model: ModelConfig,
+  provider: ProviderRow,
   signal: AbortSignal,
   messages: ApiChatMessage[],
   tools: unknown[],
@@ -274,12 +282,12 @@ async function sseCallOnce(
   signal.addEventListener('abort', onOuterAbort, { once: true })
   const timeoutTimer = setTimeout(() => ac.abort(), RESPONSE_TIMEOUT_MS)
   try {
-    const url = `${model.baseUrl.replace(/\/+$/, '')}/chat/completions`
+    const url = `${provider.baseUrl.replace(/\/+$/, '')}/chat/completions`
     const res = await fetch(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${model.apiKey}`,
+        Authorization: `Bearer ${provider.apiKey}`,
       },
       body: JSON.stringify({
         model: model.modelId,

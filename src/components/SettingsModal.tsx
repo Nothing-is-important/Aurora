@@ -46,17 +46,20 @@ const PROVIDERS: { id: string; label: string; defaultBaseUrl: string }[] = [
   { id: 'mock', label: '本地 Mock（演示）', defaultBaseUrl: '' },
 ]
 
-function emptyModel(): ModelConfig {
+function emptyProvider(): {
+  id: string
+  name: string
+  kind: string
+  baseUrl: string
+  apiKey: string
+  enabled: boolean
+} {
   return {
-    id: `custom-${Date.now().toString(36)}`,
-    name: '新模型',
-    provider: 'openai',
+    id: `prov-${Date.now().toString(36)}`,
+    name: '新提供商',
+    kind: 'openai',
     baseUrl: 'https://api.openai.com/v1',
     apiKey: '',
-    modelId: '',
-    temperature: 1,
-    maxTokens: 4096,
-    topP: 1,
     enabled: true,
   }
 }
@@ -68,8 +71,17 @@ export default function SettingsModal({
   onChanged,
   onModesChanged,
 }: SettingsModalProps) {
-  const [selectedId, setSelectedId] = useState('')
-  const [form, setForm] = useState<ModelConfig>(emptyModel())
+  const [providers, setProviders] = useState<ProviderRow[]>([])
+  const [selectedProviderId, setSelectedProviderId] = useState('')
+  const [form, setForm] = useState<{
+    id: string
+    name: string
+    kind: string
+    baseUrl: string
+    apiKey: string
+    enabled: boolean
+  }>(emptyProvider())
+  const [providerModels, setProviderModels] = useState<ModelConfig[]>([])
   const [showKey, setShowKey] = useState(false)
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState<{
@@ -79,8 +91,20 @@ export default function SettingsModal({
     modelIds?: { id: string; contextLength?: number }[]
   } | null>(null)
   const [saving, setSaving] = useState(false)
-  /** 未保存的新模型草稿（点击 + 后立即出现在左侧列表，带「未保存」徽标） */
-  const [draftModel, setDraftModel] = useState<ModelConfig | null>(null)
+  /** 未保存的新提供商草稿（点击 + 后立即出现在左侧列表，带「未保存」徽标） */
+  const [draftProvider, setDraftProvider] = useState<{
+    id: string
+    name: string
+    kind: string
+    baseUrl: string
+    apiKey: string
+    enabled: boolean
+  } | null>(null)
+  /** 手动添加模型表单 */
+  const [modelAddOpen, setModelAddOpen] = useState(false)
+  const [modelAddId, setModelAddId] = useState('')
+  /** 模型参数是否被用户手动修改过 */
+  const [paramsDirty, setParamsDirty] = useState(false)
   const [sysPrompt, setSysPrompt] = useState('')
   const [sysSaved, setSysSaved] = useState(false)
   const [whitelistText, setWhitelistText] = useState('')
@@ -102,8 +126,6 @@ export default function SettingsModal({
     isNew: boolean
   } | null>(null)
   const [pluginMsg, setPluginMsg] = useState<string | null>(null)
-  /** 参数是否被用户手动修改过（未修改时模型 ID 变化会自动套用推荐默认值） */
-  const [paramsDirty, setParamsDirty] = useState(false)
 
   const PLUGIN_TEMPLATE = `// Aurora 插件：返回 { meta, setup(api) }
 const meta = {
@@ -238,6 +260,7 @@ return { meta, setup }
       loadKb()
       void reloadCustomModes()
       void loadPlugins()
+      void reloadProviders()
     }
   }, [open])
 
@@ -299,22 +322,26 @@ return { meta, setup }
     setTimeout(() => setProxySaved(false), 2000)
   }
 
+  const reloadProviders = async (): Promise<void> => {
+    setProviders(await window.aurora.providers.list())
+  }
+
   useEffect(() => {
     if (!open) {
       // 关闭弹窗时丢弃未保存草稿
-      setDraftModel(null)
+      setDraftProvider(null)
       return
     }
     if (
-      models.length > 0 &&
-      !models.find((m) => m.id === selectedId) &&
-      selectedId !== draftModel?.id
+      providers.length > 0 &&
+      !providers.find((p) => p.id === selectedProviderId) &&
+      selectedProviderId !== draftProvider?.id
     ) {
-      const first = models.find((m) => m.provider !== 'mock') ?? models[0]
-      selectModel(first)
+      const first = providers.find((p) => p.kind !== 'mock') ?? providers[0]
+      selectProvider(first)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, models, draftModel?.id])
+  }, [open, providers, draftProvider?.id])
 
   useEffect(() => {
     if (open) {
@@ -336,74 +363,99 @@ return { meta, setup }
 
   if (!open) return null
 
-  const selectModel = (m: ModelConfig): void => {
-    setSelectedId(m.id)
-    setForm({ ...m })
+  const loadProviderModels = async (providerId: string): Promise<void> => {
+    const list = await window.aurora.models.list()
+    setProviderModels(list.filter((m) => m.providerId === providerId))
+  }
+
+  const selectProvider = (p: {
+    id: string
+    name: string
+    kind: string
+    baseUrl: string
+    apiKey: string
+    enabled: boolean
+  }): void => {
+    setSelectedProviderId(p.id)
+    setForm({
+      id: p.id,
+      name: p.name,
+      kind: p.kind,
+      baseUrl: p.baseUrl,
+      apiKey: p.apiKey,
+      enabled: p.enabled,
+    })
     setTestResult(null)
     setParamsDirty(false)
+    setModelAddOpen(false)
+    void loadProviderModels(p.id)
   }
 
   const save = async (): Promise<void> => {
     setSaving(true)
-    await window.aurora.models.save(form)
+    await window.aurora.providers.save(form)
     setSaving(false)
-    if (draftModel && draftModel.id === selectedId) {
+    if (draftProvider && draftProvider.id === selectedProviderId) {
       // 草稿转正：清除临时条目，列表刷新后自动选中正式条目
-      setDraftModel(null)
-      setSelectedId(form.id)
+      setDraftProvider(null)
+      setSelectedProviderId(form.id)
     }
-    setParamsDirty(false)
     onChanged()
   }
 
   const addNew = (): void => {
-    const m = emptyModel()
-    setDraftModel(m)
-    setSelectedId(m.id)
-    setForm(m)
+    const p = emptyProvider()
+    setDraftProvider(p)
+    setSelectedProviderId(p.id)
+    setForm(p)
+    setProviderModels([])
     setTestResult(null)
-    setParamsDirty(false)
+    setModelAddOpen(false)
   }
 
   const remove = async (): Promise<void> => {
-    if (draftModel && draftModel.id === selectedId) {
+    if (draftProvider && draftProvider.id === selectedProviderId) {
       // 删除未保存草稿：直接丢弃，回到已保存列表第一项（非 mock 优先）
-      const first = models.find((m) => m.provider !== 'mock') ?? models[0]
-      setDraftModel(null)
-      setForm(first ?? emptyModel())
-      setSelectedId(first?.id ?? '')
-      setTestResult(null)
+      const first = providers.find((p) => p.kind !== 'mock') ?? providers[0]
+      setDraftProvider(null)
+      if (first) selectProvider(first)
       return
     }
-    if (form.provider === 'mock') return
-    await window.aurora.models.remove(form.id)
-    setSelectedId('')
+    if (form.kind === 'mock') return
+    await window.aurora.providers.remove(form.id)
+    setSelectedProviderId('')
+    setProviderModels([])
     onChanged()
   }
 
   const test = async (): Promise<void> => {
     setTesting(true)
     setTestResult(null)
-    const r = await window.aurora.models.test(form)
+    const r = await window.aurora.providers.test({
+      baseUrl: form.baseUrl,
+      apiKey: form.apiKey,
+    })
     setTestResult(r)
     setTesting(false)
   }
 
-  /** 一键添加端点返回的模型（ccswitch 式自动获取） */
+  /** 一键添加端点返回的模型到当前提供商（ccswitch 式自动获取） */
   const addFetchedModel = async (
     modelId: string,
     contextLength?: number,
   ): Promise<void> => {
     await window.aurora.models.save({
-      ...form,
-      id: modelId,
+      id: `${form.id}::${modelId}`,
+      providerId: form.id,
       name: modelId,
+      modelId,
       enabled: true,
       // 按模型自动套用推荐默认参数（端点上下文长度优先参与计算）
       ...defaultParamsFor(modelId),
       maxTokens: maxTokensFor(modelId, contextLength),
     })
     onChanged()
+    void loadProviderModels(form.id)
     setTestResult((prev) =>
       prev
         ? { ...prev, modelIds: (prev.modelIds ?? []).filter((x) => x.id !== modelId) }
@@ -415,15 +467,17 @@ return { meta, setup }
     const ids = testResult?.modelIds ?? []
     for (const item of ids) {
       await window.aurora.models.save({
-        ...form,
-        id: item.id,
+        id: `${form.id}::${item.id}`,
+        providerId: form.id,
         name: item.id,
+        modelId: item.id,
         enabled: true,
         ...defaultParamsFor(item.id),
         maxTokens: maxTokensFor(item.id, item.contextLength),
       })
     }
     onChanged()
+    void loadProviderModels(form.id)
     setTestResult((prev) => (prev ? { ...prev, modelIds: [] } : prev))
   }
 
