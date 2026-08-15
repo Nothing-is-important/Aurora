@@ -24,3 +24,8 @@ dsh-shell/.dsh-runtime/
 dsh-shell/.smoke-userdata*/
 dsh-shell/smoke-full.log
 dsh-shell/smoke-screenshot.png
+
+# dsh-shell 运行时打包产物
+dsh-shell/assets/dsh-runtime.zip
+dsh-shell/.node-portable.zip
+dsh-shell/.runtime-staging/

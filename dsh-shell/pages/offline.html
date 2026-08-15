@@ -9,16 +9,19 @@
   body {
     font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
     background: #101014; color: #d5d5dc; height: 100vh; overflow: hidden;
-    -webkit-app-region: drag; user-select: none;
+    display: flex; flex-direction: column;
+    user-select: none;
   }
-  .wrap { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; padding: 40px; text-align: center; }
+  /* 只有顶部条是窗口拖动区：其余区域（按钮等）全部可正常点击 */
+  .dragbar { height: 36px; flex: none; -webkit-app-region: drag; }
+  .wrap { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; padding: 40px; text-align: center; min-height: 0; }
   .logo { width: 72px; height: 72px; border-radius: 20px; background: linear-gradient(135deg, #0a84ff, #5e5ce6); display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 22px; color: #fff; box-shadow: 0 12px 32px rgba(10,132,255,.35); }
   h1 { font-size: 19px; font-weight: 600; }
   .sub { font-size: 13px; color: #8a8a93; max-width: 520px; line-height: 1.7; }
   .status { font-size: 13px; color: #8a8a93; }
   .spinner { width: 26px; height: 26px; border: 3px solid rgba(255,255,255,.15); border-top-color: #0a84ff; border-radius: 50%; animation: spin 1s linear infinite; margin: 0 auto 6px; }
   @keyframes spin { to { transform: rotate(360deg); } }
-  .row { display: flex; gap: 12px; -webkit-app-region: no-drag; }
+  .row { display: flex; gap: 12px; }
   button {
     font-family: inherit; font-size: 13px; font-weight: 600; border: none; cursor: pointer;
     border-radius: 10px; padding: 10px 22px; transition: transform .15s, filter .15s;
@@ -33,6 +36,7 @@
 </style>
 </head>
 <body>
+<div class="dragbar"></div>
 <div class="wrap">
   <div class="logo">DSH</div>
   <h1 id="title">DeepSeek Harness 服务</h1>

@@ -6,7 +6,16 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { EventEmitter } from 'node:events'
 
-/** 常见 npm 全局前缀（dsh 包探测顺序；开发环境优先本仓库自带的 .dsh-runtime） */
+let resolvedCache = null
+let extractedRuntimeDir = null
+
+/** 主进程在启动时调用：注册解压后的内置运行时目录（优先于全局 npm 安装）。 */
+export function setExtractedRuntimeDir(dir) {
+  extractedRuntimeDir = dir
+  resolvedCache = null
+}
+
+/** 常见 npm 全局前缀（dsh 包探测顺序；内置运行时最高优先）。 */
 function candidatePrefixes() {
   const list = [
     process.env.npm_config_prefix,
@@ -14,9 +23,13 @@ function candidatePrefixes() {
     'F:\\npm',
     'C:\\Program Files\\nodejs',
   ]
-  // 打包版：安装目录 resources/dsh-runtime（electron-builder extraResources 内置）
+  // 打包版：安装目录 resources/dsh-runtime（electron-builder extraResources 内置，已弃用 zip 时代保留）
   if (process.resourcesPath) {
     list.unshift(join(process.resourcesPath, 'dsh-runtime'))
+  }
+  // 解压后的内置运行时（含 node.exe，完全自包含）
+  if (extractedRuntimeDir) {
+    list.unshift(extractedRuntimeDir)
   }
   // 开发/测试专用：仓库内独立安装的 dsh 运行时
   const local = join(fileURLToPath(new URL('..', import.meta.url)), '.dsh-runtime')
@@ -50,8 +63,6 @@ function functionalProbe(cmd, args) {
   }
 }
 
-let resolvedCache = null
-
 /**
  * 定位 dsh CLI。
  * 顺序：AURORA_DSH_BIN 显式指定 → 结构+功能双健康的 npm 前缀安装（node
@@ -78,10 +89,15 @@ export function resolveDsh() {
     }
     return resolvedCache
   }
-  const nodeExe = join('C:\\Program Files\\nodejs', 'node.exe')
+  const nodeExes = [
+    extractedRuntimeDir ? join(extractedRuntimeDir, 'node.exe') : null,
+    join('C:\\Program Files\\nodejs', 'node.exe'),
+  ].filter(Boolean)
   for (const prefix of candidatePrefixes()) {
     const bin = join(prefix, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js')
-    if (!existsSync(bin) || !existsSync(nodeExe) || !installHealthy(prefix)) continue
+    if (!existsSync(bin) || !installHealthy(prefix)) continue
+    const nodeExe = nodeExes.find((n) => existsSync(n))
+    if (!nodeExe) continue
     if (!functionalProbe(nodeExe, [bin])) continue
     resolvedCache = { cmd: nodeExe, args: [bin], shell: false, source: 'package' }
     return resolvedCache

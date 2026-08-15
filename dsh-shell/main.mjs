@@ -2,10 +2,11 @@
 // 原生窗口/托盘/快捷键/通知包裹 `dsh web`（DeepSeek Harness 官方 Web 界面）。
 // 冒烟模式：SMOKE=1 时自动跑审计序列，打印 [SMOKE] report 并以 0/2 退出。
 import { app, BrowserWindow, Tray, Menu, nativeImage, ipcMain, globalShortcut, Notification, dialog, shell, screen } from 'electron'
-import { mkdirSync, writeFileSync, readFileSync, existsSync, appendFileSync } from 'node:fs'
+import { mkdirSync, rmSync, renameSync, writeFileSync, readFileSync, existsSync, appendFileSync } from 'node:fs'
+import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { join } from 'node:path'
-import { DshManager, probeUrl } from './src/dsh-manager.mjs'
+import { DshManager, probeUrl, setExtractedRuntimeDir } from './src/dsh-manager.mjs'
 import { loadSettings } from './src/settings.mjs'
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url))
@@ -63,6 +64,66 @@ const log = (...args) => console.log('[aurora-dsh]', ...args)
 
 function defaultDshHome() {
   return join(app.getPath('userData'), 'dsh-home')
+}
+
+// ---------- 内置运行时（dsh-runtime.zip → 共享临时目录，首启解压） ----------
+function runtimeDir() {
+  return join(app.getPath('temp'), 'aurora-dsh-runtime')
+}
+
+function runtimeZipPath() {
+  const packaged = process.resourcesPath ? join(process.resourcesPath, 'dsh-runtime.zip') : null
+  if (packaged && existsSync(packaged)) return packaged
+  const dev = join(__dirname, 'assets', 'dsh-runtime.zip')
+  return existsSync(dev) ? dev : null
+}
+
+function runtimeValid(dir, version) {
+  try {
+    if (readFileSync(join(dir, '.version'), 'utf8').trim() !== version) return false
+  } catch {
+    return false
+  }
+  return (
+    existsSync(join(dir, 'node.exe')) &&
+    existsSync(join(dir, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js'))
+  )
+}
+
+function extractZip(zip, target) {
+  return new Promise((resolve, reject) => {
+    const child = spawn('tar', ['-x', '-f', zip, '-C', target], { windowsHide: true, stdio: 'ignore' })
+    child.on('exit', (code) => (code === 0 ? resolve() : reject(new Error(`解压失败 (tar exit ${code})`))))
+    child.on('error', (err) => reject(err))
+  })
+}
+
+/** 确保内置运行时可用：有效则复用；否则解压 zip（原子改名，防并发启动竞争）。 */
+async function ensureRuntime(version) {
+  const dir = runtimeDir()
+  if (runtimeValid(dir, version)) {
+    setExtractedRuntimeDir(dir)
+    return true
+  }
+  const zip = runtimeZipPath()
+  if (!zip) return false
+  publishState({ phase: 'starting', message: '首次运行：正在解压内置运行时（约一分钟，仅此一次）…' })
+  const tmp = `${dir}.tmp-${process.pid}`
+  rmSync(tmp, { recursive: true, force: true })
+  mkdirSync(tmp, { recursive: true })
+  await extractZip(zip, tmp)
+  writeFileSync(join(tmp, '.version'), version, 'utf8')
+  try {
+    renameSync(tmp, dir)
+  } catch {
+    // 另一实例抢先完成：丢弃本次解压
+    rmSync(tmp, { recursive: true, force: true })
+  }
+  if (runtimeValid(dir, version)) {
+    setExtractedRuntimeDir(dir)
+    return true
+  }
+  return false
 }
 
 function publishState(patch) {
@@ -368,28 +429,48 @@ async function runSmoke(extra = {}) {
     ok('pageHasTextarea', dom.textarea >= 1, dom)
   }
 
-  // phase4b: 内测声明弹窗交互——点击「继续」→ 弹窗关闭 → 刷新后不再出现
-  // （ack 已写入主机设置；此场景直接对应真实用户首次使用时的点击路径）
+  // phase4b0: 弹窗打开状态下扫描拖动区（值必须为 'drag'；'none'/'no-drag' 不算）。
+  // 用户反馈「点哪里都拖动窗口」，此断言直接覆盖弹窗与整页的可点击性。
   try {
-    const click = await win.webContents.executeJavaScript(`(function(){
-      const b = Array.from(document.querySelectorAll('button')).find((x) => (x.textContent||'').trim() === '继续')
-      if (!b) return { found: false }
-      const beforeDisabled = !!b.disabled
-      b.click()
-      return { found: true, beforeDisabled }
+    const dragScan = await win.webContents.executeJavaScript(`(function(){
+      const out = []
+      document.querySelectorAll('body *').forEach((el) => {
+        const r = getComputedStyle(el).webkitAppRegion
+        if (r === 'drag') out.push((el.tagName + '.' + String(el.className).slice(0, 30)).trim())
+      })
+      return { count: out.length, sample: out.slice(0, 6) }
     })()`)
-    await sleep(2500)
-    const modalGone = await win.webContents.executeJavaScript(
-      `!Array.from(document.querySelectorAll('button')).some((x) => (x.textContent||'').trim() === '继续')`,
-    )
-    ok('onboardingAckClick', click.found === true && !click.beforeDisabled && modalGone === true, { click, modalGone })
-    win.webContents.reload()
-    await waitFor(() => win.webContents.getURL().startsWith('http'), 15000)
-    await sleep(6000)
-    const modalGone2 = await win.webContents.executeJavaScript(
-      `!Array.from(document.querySelectorAll('button')).some((x) => (x.textContent||'').trim() === '继续')`,
-    )
-    ok('onboardingAckPersisted', modalGone2 === true, { modalGone2 })
+    ok('noDragRegionsOnRemote', dragScan.count === 0, dragScan)
+  } catch (err) {
+    ok('noDragRegionsOnRemote', false, String(err))
+  }
+
+  // phase4b: 内测声明弹窗——真实鼠标输入点击「继续」（sendInputEvent 注入
+  // 可信事件，等价用户手点）→ 弹窗关闭 → 刷新后不再出现（ack 已持久化）
+  try {
+    const rect = await win.webContents.executeJavaScript(`(function(){
+      const b = Array.from(document.querySelectorAll('button')).find((x) => (x.textContent||'').trim() === '继续')
+      if (!b) return null
+      const r = b.getBoundingClientRect()
+      return { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2), disabled: !!b.disabled }
+    })()`)
+    ok('onboardingBtnFound', !!rect && !rect.disabled, rect)
+    if (rect && !rect.disabled) {
+      win.webContents.sendInputEvent({ type: 'mouseDown', x: rect.x, y: rect.y, button: 'left', clickCount: 1 })
+      win.webContents.sendInputEvent({ type: 'mouseUp', x: rect.x, y: rect.y, button: 'left', clickCount: 1 })
+      await sleep(2500)
+      const modalGone = await win.webContents.executeJavaScript(
+        `!Array.from(document.querySelectorAll('button')).some((x) => (x.textContent||'').trim() === '继续')`,
+      )
+      ok('onboardingAckClick', modalGone === true, { rect, modalGone })
+      win.webContents.reload()
+      await waitFor(() => win.webContents.getURL().startsWith('http'), 15000)
+      await sleep(6000)
+      const modalGone2 = await win.webContents.executeJavaScript(
+        `!Array.from(document.querySelectorAll('button')).some((x) => (x.textContent||'').trim() === '继续')`,
+      )
+      ok('onboardingAckPersisted', modalGone2 === true, { modalGone2 })
+    }
   } catch (err) {
     ok('onboardingAckClick', false, String(err))
   }
@@ -465,11 +546,30 @@ async function runMissingSmoke() {
   ok('offlinePageLoaded', win.webContents.getURL().includes('offline.html'), win.webContents.getURL())
   ok('noDshGuideVisible', guideShown && dom.noDshVisible === true, dom)
   ok('retryBtnExists', dom.retryBtn === true, dom)
-  // 点击「重新检测」→ 仍然缺失 → 引导页保持
-  await win.webContents.executeJavaScript(`document.getElementById('btn-retry').click()`)
-  await sleep(2000)
-  const dom2 = await domProbe()
-  ok('retryStaysOnGuide', dom2.noDshVisible === true, dom2)
+  // 真实鼠标点击「重新检测」：先出现重启中视图（≥800ms 保底展示），
+  // 再回到引导视图（dsh 仍缺失）。真实输入验证按钮未被拖动区吞掉。
+  try {
+    const rect = await win.webContents.executeJavaScript(`(function(){
+      const b = document.getElementById('btn-retry')
+      if (!b) return null
+      const r = b.getBoundingClientRect()
+      return { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) }
+    })()`)
+    ok('retryBtnRect', !!rect, rect)
+    if (rect) {
+      win.webContents.sendInputEvent({ type: 'mouseDown', x: rect.x, y: rect.y, button: 'left', clickCount: 1 })
+      win.webContents.sendInputEvent({ type: 'mouseUp', x: rect.x, y: rect.y, button: 'left', clickCount: 1 })
+      const restartingShown = await waitFor(async () => {
+        const d = await domProbe()
+        return d.stateText.includes('正在重新检测')
+      }, 4000, 300)
+      await waitFor(async () => (await domProbe()).noDshVisible === true, 20000, 1000)
+      const back = await domProbe()
+      ok('retryClickWorks', restartingShown && back.noDshVisible === true, { restartingShown, back })
+    }
+  } catch (err) {
+    ok('retryClickWorks', false, String(err))
+  }
   smokeResults.failures = failures
   console.log('[SMOKE] report: ' + JSON.stringify(smokeResults, null, 2))
   console.log(failures.length === 0 ? '[SMOKE] OK' : '[SMOKE] FAIL:\n  - ' + failures.join('\n  - '))
@@ -480,7 +580,6 @@ async function runMissingSmoke() {
 async function boot() {
   settings = loadSettings(app.getPath('userData'))
   createTray()
-  wireDsh()
 
   // 全局快捷键：Ctrl+Shift+A 显示/隐藏窗口；若被占用（其它应用/残留实例），
   // 回退到 Ctrl+Shift+F9。注册失败只降级不崩溃。
@@ -500,6 +599,14 @@ async function boot() {
 
   createWindow()
   showOffline('starting', '正在启动 DeepSeek Harness 服务…')
+
+  // 内置运行时：优先解压/复用（此后 resolver 会优先用它 + 自带的 node.exe）
+  const hasRuntime = await ensureRuntime(app.getVersion())
+  if (!hasRuntime && !SMOKE_MISSING) {
+    log('no bundled runtime, falling back to global dsh detection')
+  }
+
+  wireDsh()
 
   if (SMOKE_MISSING) {
     // 模拟 dsh 缺失场景：AURORA_DSH_BIN 指向不存在的路径
@@ -527,7 +634,9 @@ async function boot() {
 ipcMain.handle('shell:get-state', () => currentState)
 ipcMain.on('shell:retry-dsh', () => {
   void (async () => {
+    // 至少展示 800ms 的重启状态，避免失败太快导致界面闪一下
     showOffline('restarting', '正在重新检测并启动…')
+    await sleep(800)
     try {
       await manager.start()
     } catch (err) {

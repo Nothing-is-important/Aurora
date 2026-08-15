@@ -10,17 +10,10 @@ files:
   - assets/**/*
   - package.json
 extraResources:
-  # 自带 dsh 运行时：不依赖机器上的全局安装（机器全局包可能损坏/缺失）。
-  # 逐项指定：整目录复制时 builder 会对含 package.json 的目录做模块剪枝。
-  - from: .dsh-runtime/node_modules
-    to: dsh-runtime/node_modules
-    filter:
-      - "**/*"
-      - "!**/*.map"
-  - from: .dsh-runtime/package.json
-    to: dsh-runtime/package.json
-  - from: .dsh-runtime/package-lock.json
-    to: dsh-runtime/package-lock.json
+  # 内置 dsh 运行时 = 单个 zip（node.exe + node_modules）：
+  # 安装器只复制一个文件，秒级完成；首启解压到共享临时目录。
+  - from: assets/dsh-runtime.zip
+    to: dsh-runtime.zip
 electronVersion: 43.4.0
 win:
   target:
