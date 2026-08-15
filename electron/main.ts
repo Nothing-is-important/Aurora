@@ -586,6 +586,16 @@ const DOM_AUDIT = `
   out.modePillAfter = (
     (document.querySelector('[data-mode-pill]') || {}).textContent || ''
   )
+  // PTC 模式下验证模板按模式过滤
+  const promptBtnPtc = document.querySelector('[data-prompt-btn]')
+  if (promptBtnPtc) promptBtnPtc.click()
+  await sleep(300)
+  const ptcTemplateNames = Array.from(
+    document.querySelectorAll('[data-template-item]')
+  ).map((b) => (b.textContent || '').replace(/\\s+/g, ' ').trim())
+  out.ptcTemplateFiltered =
+    ptcTemplateNames.some((t) => t.includes('单元测试')) &&
+    !ptcTemplateNames.some((t) => t.includes('翻译助手'))
   const modePill2 = document.querySelector('[data-mode-pill]')
   if (modePill2) modePill2.click()
   await sleep(300)
@@ -1101,6 +1111,7 @@ async function runSmoke(w: BrowserWindow, errors: string[]): Promise<void> {
     failures.push(`模式切换未生效: ${dom.modePillAfter}`)
   if (!String(dom.modePillRestored).includes('标准模式'))
     failures.push(`模式切回失败: ${dom.modePillRestored}`)
+  if (dom.ptcTemplateFiltered !== true) failures.push('PTC 模式模板过滤未生效')
   // Token 统计断言
   const usageMeta = String(dom.usageMeta)
   if (!usageMeta.includes('tokens') || !usageMeta.includes('耗时') || !usageMeta.includes('≈¥'))
