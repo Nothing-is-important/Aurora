@@ -1061,8 +1061,9 @@ async function runSmoke(w: BrowserWindow, errors: string[]): Promise<void> {
   )
     failures.push('设置表单字段缺失')
   if (dom.openDataDirBtn !== true) failures.push('打开数据目录按钮缺失')
-  if (!String(dom.appVersion).startsWith('v0.3'))
-    failures.push(`版本号显示异常: ${dom.appVersion}`)
+  const expectedVersion = 'v' + app.getVersion()
+  if (String(dom.appVersion) !== expectedVersion)
+    failures.push(`版本号显示异常: ${dom.appVersion}（期望 ${expectedVersion}）`)
   // 添加模型草稿断言
   if (dom.draftBadge !== true) failures.push('「未保存」徽标未出现')
   if (dom.draftItemVisible !== true) failures.push('草稿条目未出现在模型列表')
