@@ -1,0 +1,8 @@
+{
+  "name": "aurora-dsh-shell-poc",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "main.mjs",
+  "description": "Aurora Route-1 PoC: native Electron shell around `dsh web`"
+}

@@ -14,3 +14,7 @@ Thumbs.db
 docs/xiaohongshu-文案.md
 
 smoke-out*.txt
+
+poc-dsh/.home/
+poc-run.log
+poc-dsh/.home-fresh/
