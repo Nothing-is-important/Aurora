@@ -363,6 +363,8 @@ async function runSmoke(extra = {}) {
 
   // phase5: 窗口状态持久化（对比实际 getBounds——Electron 会对 setBounds 做边框取整）
   try {
+    if (!win.isVisible()) win.show()
+    await sleep(500)
     win.setBounds({ x: 140, y: 90, width: 1200, height: 780 })
     await sleep(900)
     const actual = win.getBounds()
@@ -390,10 +392,10 @@ async function runSmoke(extra = {}) {
     }
   }
 
-  // phase7: 截图存证
+  // phase7: 截图存证（写到 userData：打包后 app.asar 只读）
   try {
     const img = await win.webContents.capturePage()
-    const out = join(__dirname, 'smoke-screenshot.png')
+    const out = join(app.getPath('userData'), 'smoke-screenshot.png')
     writeFileSync(out, img.toPNG())
     ok('screenshotSaved', existsSync(out) && img.getSize().width > 0, out)
   } catch (err) {
