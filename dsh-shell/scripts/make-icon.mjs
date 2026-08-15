@@ -14,13 +14,12 @@ const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512">
       <stop offset="1" stop-color="#5e5ce6"/>
     </linearGradient>
   </defs>
-  <rect width="512" height="512" rx="112" fill="#101014"/>
-  <rect x="28" y="28" width="456" height="456" rx="96" fill="url(#g)"/>
+  <rect width="512" height="512" rx="112" fill="url(#g)"/>
   <text x="256" y="330" font-family="Segoe UI, Arial, sans-serif" font-size="190" font-weight="700"
         fill="#ffffff" text-anchor="middle">DSH</text>
 </svg>`
 
-const html = `<!doctype html><html><body style="margin:0;background:#101014">
+const html = `<!doctype html><html><body style="margin:0;background:transparent">
 <img src="data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}" width="512" height="512" style="display:block">
 </body></html>`
 
@@ -30,6 +29,7 @@ app.whenReady().then(async () => {
     height: 512,
     show: false,
     frame: false,
+    transparent: true,
     useContentSize: true,
     webPreferences: { offscreen: true },
   })
