@@ -21,22 +21,25 @@ if (SMOKE) {
   app.setPath('userData', join(app.getPath('temp'), `aurora-dsh-smoke-${process.pid}-${Date.now()}`))
   // 打包后的 GUI 进程无控制台：把日志镜像到文件供驱动断言
   const smokeLogFile = join(app.getPath('userData'), 'smoke-app.log')
-  const mirror = (level) => (text) => {
+  const mirror = (level) => (...args) => {
     try {
-      appendFileSync(smokeLogFile, `${new Date().toISOString()} ${level} ${text}\n`, 'utf8')
+      const line = args
+        .map((a) => (typeof a === 'string' ? a : JSON.stringify(a)))
+        .join(' ')
+      appendFileSync(smokeLogFile, `${new Date().toISOString()} ${level} ${line}\n`, 'utf8')
     } catch {
       /* 日志失败不影响审计 */
     }
   }
   const origLog = console.log.bind(console)
   const origErr = console.error.bind(console)
-  console.log = (text) => {
-    origLog(text)
-    mirror('LOG')(typeof text === 'string' ? text : JSON.stringify(text))
+  console.log = (...args) => {
+    origLog(...args)
+    mirror('LOG')(...args)
   }
-  console.error = (text) => {
-    origErr(text)
-    mirror('ERR')(typeof text === 'string' ? text : JSON.stringify(text))
+  console.error = (...args) => {
+    origErr(...args)
+    mirror('ERR')(...args)
   }
 }
 
@@ -345,9 +348,13 @@ async function runSmoke(extra = {}) {
     ok('settingsRw', false, String(err))
   }
 
-  // phase2: 托盘 + 快捷键
+  // phase2: 托盘 + 快捷键（主键被占用时回退键也算通过）
   ok('trayCreated', !!tray)
-  ok('shortcutRegistered', globalShortcut.isRegistered('CommandOrControl+Shift+A'))
+  ok(
+    'shortcutRegistered',
+    globalShortcut.isRegistered('CommandOrControl+Shift+A') ||
+      globalShortcut.isRegistered('CommandOrControl+Shift+F9'),
+  )
 
   // phase3-4: dsh 就绪 + 远程页面加载
   ok('dshReady', !!manager.url, manager.url ?? null)
@@ -359,6 +366,32 @@ async function runSmoke(extra = {}) {
     ok('remoteLoaded', win.webContents.getURL().startsWith('http'), win.webContents.getURL())
     ok('pageHasHarness', dom.hasHarness === true, dom)
     ok('pageHasTextarea', dom.textarea >= 1, dom)
+  }
+
+  // phase4b: 内测声明弹窗交互——点击「继续」→ 弹窗关闭 → 刷新后不再出现
+  // （ack 已写入主机设置；此场景直接对应真实用户首次使用时的点击路径）
+  try {
+    const click = await win.webContents.executeJavaScript(`(function(){
+      const b = Array.from(document.querySelectorAll('button')).find((x) => (x.textContent||'').trim() === '继续')
+      if (!b) return { found: false }
+      const beforeDisabled = !!b.disabled
+      b.click()
+      return { found: true, beforeDisabled }
+    })()`)
+    await sleep(2500)
+    const modalGone = await win.webContents.executeJavaScript(
+      `!Array.from(document.querySelectorAll('button')).some((x) => (x.textContent||'').trim() === '继续')`,
+    )
+    ok('onboardingAckClick', click.found === true && !click.beforeDisabled && modalGone === true, { click, modalGone })
+    win.webContents.reload()
+    await waitFor(() => win.webContents.getURL().startsWith('http'), 15000)
+    await sleep(6000)
+    const modalGone2 = await win.webContents.executeJavaScript(
+      `!Array.from(document.querySelectorAll('button')).some((x) => (x.textContent||'').trim() === '继续')`,
+    )
+    ok('onboardingAckPersisted', modalGone2 === true, { modalGone2 })
+  } catch (err) {
+    ok('onboardingAckClick', false, String(err))
   }
 
   // phase5: 窗口状态持久化（对比实际 getBounds——Electron 会对 setBounds 做边框取整）
@@ -449,15 +482,20 @@ async function boot() {
   createTray()
   wireDsh()
 
-  // 全局快捷键：Ctrl+Shift+A 显示/隐藏窗口
-  const sh = globalShortcut.register('CommandOrControl+Shift+A', () => {
+  // 全局快捷键：Ctrl+Shift+A 显示/隐藏窗口；若被占用（其它应用/残留实例），
+  // 回退到 Ctrl+Shift+F9。注册失败只降级不崩溃。
+  const toggle = () => {
     if (!win) createWindow()
     if (win.isVisible()) win.hide()
     else {
       win.show()
       win.focus()
     }
-  })
+  }
+  let sh = globalShortcut.register('CommandOrControl+Shift+A', toggle)
+  if (!sh) {
+    sh = globalShortcut.register('CommandOrControl+Shift+F9', toggle)
+  }
   log('global shortcut registered:', sh)
 
   createWindow()

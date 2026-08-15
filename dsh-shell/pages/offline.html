@@ -55,6 +55,7 @@
     <p class="sub" id="error-text">服务启动失败。</p>
     <div class="row">
       <button class="primary" id="btn-retry2">重试</button>
+      <button class="ghost" id="btn-guide2">查看安装文档</button>
     </div>
   </div>
 </div>
@@ -83,6 +84,7 @@
   $('btn-retry').addEventListener('click', () => window.auroraShell.retryDsh())
   $('btn-retry2').addEventListener('click', () => window.auroraShell.retryDsh())
   $('btn-guide').addEventListener('click', () => window.auroraShell.openInstallGuide())
+  $('btn-guide2').addEventListener('click', () => window.auroraShell.openInstallGuide())
 </script>
 </body>
 </html>

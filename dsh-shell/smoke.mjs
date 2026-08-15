@@ -11,7 +11,13 @@ const APP_DIR = fileURLToPath(new URL('.', import.meta.url))
 function cleanupResidual() {
   if (process.platform !== 'win32') return
   try {
-    // 只杀命令行包含 dsh-shell 的残留 Electron（不误伤其他 Electron 应用）
+    // 杀残留：本应用的打包版实例（占快捷键/端口）+ 命令行含 dsh-shell 的
+    // 开发态 Electron。都是自己的应用，测试前清理安全。
+    execSync('taskkill /F /IM "Aurora DSH.exe" /T', { stdio: 'ignore' })
+  } catch {
+    /* 无残留则忽略 */
+  }
+  try {
     execSync(
       'powershell -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { $_.Name -eq \'electron.exe\' -and $_.CommandLine -like \'*dsh-shell*\' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }"',
       { stdio: 'ignore' },

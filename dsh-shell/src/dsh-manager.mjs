@@ -14,7 +14,11 @@ function candidatePrefixes() {
     'F:\\npm',
     'C:\\Program Files\\nodejs',
   ]
-  // 开发/测试专用：仓库内独立安装的 dsh 运行时（打包版会换成 resources 路径）
+  // 打包版：安装目录 resources/dsh-runtime（electron-builder extraResources 内置）
+  if (process.resourcesPath) {
+    list.unshift(join(process.resourcesPath, 'dsh-runtime'))
+  }
+  // 开发/测试专用：仓库内独立安装的 dsh 运行时
   const local = join(fileURLToPath(new URL('..', import.meta.url)), '.dsh-runtime')
   if (existsSync(join(local, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js'))) {
     list.unshift(local)
@@ -32,13 +36,28 @@ function installHealthy(prefix) {
   return existsSync(cordisNested) || existsSync(cordisHoisted)
 }
 
+/** 功能探测：真实执行 `node <bin.js> --profile web --help`，要求 15s 内退出 0。 */
+function functionalProbe(cmd, args) {
+  try {
+    const r = spawnSync(cmd, [...args, '--profile', 'web', '--help'], {
+      encoding: 'utf8',
+      timeout: 15000,
+      windowsHide: true,
+    })
+    return r.status === 0
+  } catch {
+    return false
+  }
+}
+
 let resolvedCache = null
 
 /**
  * 定位 dsh CLI。
- * 顺序：AURORA_DSH_BIN 显式指定 → 结构健康的 npm 前缀安装（node
+ * 顺序：AURORA_DSH_BIN 显式指定 → 结构+功能双健康的 npm 前缀安装（node
  * <pkg>/lib/bin.js 直接执行，规避 CVE-2024-27980 对 .cmd spawn 的 EINVAL
- * 限制）→ `where dsh`（仅接受 .exe）→ 回退 shell:true 的裸 'dsh'。
+ * 限制；部分安装只有结构完整但运行即崩，必须过功能探测）→ `where dsh`
+ * （仅接受 .exe）→ 回退 shell:true 的裸 'dsh'。
  * 结果按进程缓存：首次成功探测后不再重复扫描。
  */
 export function resolveDsh() {
@@ -62,10 +81,10 @@ export function resolveDsh() {
   const nodeExe = join('C:\\Program Files\\nodejs', 'node.exe')
   for (const prefix of candidatePrefixes()) {
     const bin = join(prefix, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js')
-    if (existsSync(bin) && existsSync(nodeExe) && installHealthy(prefix)) {
-      resolvedCache = { cmd: nodeExe, args: [bin], shell: false, source: 'package' }
-      return resolvedCache
-    }
+    if (!existsSync(bin) || !existsSync(nodeExe) || !installHealthy(prefix)) continue
+    if (!functionalProbe(nodeExe, [bin])) continue
+    resolvedCache = { cmd: nodeExe, args: [bin], shell: false, source: 'package' }
+    return resolvedCache
   }
   const where = spawnSync('where', ['dsh'], { encoding: 'utf8', windowsHide: true })
   const line = (where.stdout || '')
@@ -163,6 +182,7 @@ export class DshManager extends EventEmitter {
       }
       this.proc = child
       let settled = false
+      let stderrTail = ''
       const fail = (err) => {
         if (settled) return
         settled = true
@@ -195,6 +215,7 @@ export class DshManager extends EventEmitter {
       })
       child.stderr.on('data', (c) => {
         const s = c.toString()
+        stderrTail = (stderrTail + s).slice(-800)
         if (s.trim()) this.log(`stderr: ${s.trim().slice(0, 300)}`)
       })
       child.on('error', (err) => fail(new Error(`spawn dsh failed: ${err.message}`)))
@@ -204,7 +225,10 @@ export class DshManager extends EventEmitter {
         const unexpected = !settled || !this.stopping
         this.log(`exit(${code})${unexpected ? ' [unexpected]' : ''}`)
         if (settled) this.emit('exit', { code, unexpected })
-        else if (!this.stopping) fail(new Error(`dsh exited early with code ${code}`))
+        else if (!this.stopping) {
+          const hint = stderrTail.trim() ? `\n${stderrTail.trim().split('\n').slice(-3).join('\n')}` : ''
+          fail(new Error(`dsh exited early with code ${code}${hint}`))
+        }
       })
       setTimeout(() => fail(new Error('等待 dsh web URL 超时(30s)')), 30000)
     })

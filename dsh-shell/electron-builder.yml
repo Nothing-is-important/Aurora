@@ -9,6 +9,14 @@ files:
   - src/**/*
   - assets/**/*
   - package.json
+extraResources:
+  # 自带 dsh 运行时：不依赖机器上的全局安装（机器全局包可能损坏/缺失）
+  - from: .dsh-runtime
+    to: dsh-runtime
+    filter:
+      - "**/*"
+      - "!**/*.map"
+      - "!**/node_modules/.cache/**"
 electronVersion: 43.4.0
 win:
   target:
