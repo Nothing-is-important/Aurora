@@ -1,7 +1,7 @@
 {
   "name": "aurora",
   "productName": "Aurora",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "苹果风格 DeepSeek Harness 桌面工作台",
   "main": "dist/main/main.js",
   "private": true,

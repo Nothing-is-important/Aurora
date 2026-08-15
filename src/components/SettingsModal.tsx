@@ -8,6 +8,7 @@ import {
   EyeOff,
   FolderPlus,
   Loader2,
+  Pencil,
   Play,
   Plus,
   PlugZap,
@@ -20,6 +21,7 @@ import {
 import type { ModelConfig, McpServerConfig, KbRow, PluginRow } from '../lib/ipc'
 import { loadCustomModes, saveCustomModes } from '../lib/modes'
 import type { ChatMode } from '../lib/modes'
+import { defaultParamsFor } from '../lib/params'
 
 interface SettingsModalProps {
   open: boolean
@@ -85,22 +87,67 @@ export default function SettingsModal({
   const [appVersion, setAppVersion] = useState('')
   const [customModes, setCustomModes] = useState<ChatMode[]>([])
   const [pluginList, setPluginList] = useState<PluginRow[]>([])
-  const [pluginCode, setPluginCode] = useState('')
+  const [pluginEditor, setPluginEditor] = useState<{
+    id: string
+    code: string
+    isNew: boolean
+  } | null>(null)
   const [pluginMsg, setPluginMsg] = useState<string | null>(null)
+  /** 参数是否被用户手动修改过（未修改时模型 ID 变化会自动套用推荐默认值） */
+  const [paramsDirty, setParamsDirty] = useState(false)
+
+  const PLUGIN_TEMPLATE = `// Aurora 插件：返回 { meta, setup(api) }
+const meta = {
+  name: '我的插件',
+  version: '1.0.0',
+  description: '插件功能简介',
+}
+function setup(api) {
+  api.registerTool({
+    name: 'my_tool',
+    description: '工具功能说明（模型会据此决定何时调用）',
+    parameters: {
+      type: 'object',
+      properties: { input: { type: 'string', description: '输入参数' } },
+      required: ['input'],
+    },
+    handler: (args) => \`处理结果：\${args.input}\`,
+  })
+}
+return { meta, setup }
+`
 
   const loadPlugins = async (): Promise<void> => {
     setPluginList(await window.aurora.plugins.list())
   }
 
-  const createAndRunPlugin = async (): Promise<void> => {
-    const code = pluginCode.trim()
-    if (!code) return
-    const id = `plugin-${Date.now().toString(36)}`
-    await window.aurora.plugins.define(id, code)
-    const r = await window.aurora.plugins.run(id)
-    setPluginCode('')
-    setPluginMsg(r.ok ? '插件已保存并运行' : `运行失败：${r.error ?? '未知错误'}`)
+  const openPluginEditor = (p?: PluginRow): void => {
+    setPluginEditor(
+      p
+        ? { id: p.id, code: p.code, isNew: false }
+        : {
+            id: `plugin-${Date.now().toString(36)}`,
+            code: PLUGIN_TEMPLATE,
+            isNew: true,
+          },
+    )
+  }
+
+  const pluginTestRun = async (): Promise<void> => {
+    if (!pluginEditor) return
+    await window.aurora.plugins.define(pluginEditor.id, pluginEditor.code)
+    const r = await window.aurora.plugins.run(pluginEditor.id)
+    setPluginMsg(r.ok ? '测试运行成功：工具已注册' : `运行失败：${r.error ?? '未知错误'}`)
     setTimeout(() => setPluginMsg(null), 4000)
+    void loadPlugins()
+  }
+
+  const pluginSave = async (): Promise<void> => {
+    if (!pluginEditor) return
+    await window.aurora.plugins.define(pluginEditor.id, pluginEditor.code)
+    setPluginEditor(null)
+    setPluginMsg('已保存（未运行）')
+    setTimeout(() => setPluginMsg(null), 3000)
     void loadPlugins()
   }
 
@@ -284,6 +331,7 @@ export default function SettingsModal({
     setSelectedId(m.id)
     setForm({ ...m })
     setTestResult(null)
+    setParamsDirty(false)
   }
 
   const save = async (): Promise<void> => {
@@ -295,6 +343,7 @@ export default function SettingsModal({
       setDraftModel(null)
       setSelectedId(form.id)
     }
+    setParamsDirty(false)
     onChanged()
   }
 
@@ -304,6 +353,7 @@ export default function SettingsModal({
     setSelectedId(m.id)
     setForm(m)
     setTestResult(null)
+    setParamsDirty(false)
   }
 
   const remove = async (): Promise<void> => {
@@ -336,6 +386,8 @@ export default function SettingsModal({
       id: modelId,
       name: modelId,
       enabled: true,
+      // 按模型自动套用推荐默认参数
+      ...defaultParamsFor(modelId),
     })
     onChanged()
     setTestResult((prev) =>
@@ -353,6 +405,7 @@ export default function SettingsModal({
         id,
         name: id,
         enabled: true,
+        ...defaultParamsFor(id),
       })
     }
     onChanged()
@@ -809,13 +862,23 @@ export default function SettingsModal({
               </div>
 
               <div>
-                <label className={label}>
-                  动态插件（DPS · 代码热定义 / 运行 / 停止）
-                </label>
+                <div className="flex items-center justify-between">
+                  <label className={label}>
+                    动态插件（DPS · 代码热定义 / 运行 / 停止）
+                  </label>
+                  <button
+                    data-plugin-new
+                    onClick={() => openPluginEditor()}
+                    title="新建插件"
+                    className="flex h-6 w-6 items-center justify-center rounded-md text-black/45 transition-colors hover:bg-black/[0.06] hover:text-apple-blue dark:text-white/45 dark:hover:bg-white/[0.08]"
+                  >
+                    <Plus size={13} strokeWidth={2.4} />
+                  </button>
+                </div>
                 <div className="space-y-1.5">
                   {pluginList.length === 0 && (
                     <p className="rounded-lg bg-black/[0.03] px-3 py-2.5 text-[11.5px] text-black/40 dark:bg-white/[0.05] dark:text-white/40">
-                      暂无插件。在下方粘贴插件代码并「保存并运行」，插件注册的工具会并入 Agent 循环。
+                      暂无插件。点右上角 + 新建，或编辑内置「时间查询」示例插件；插件注册的工具会并入 Agent 循环。
                     </p>
                   )}
                   {pluginList.map((p) => (
@@ -873,6 +936,14 @@ export default function SettingsModal({
                           </button>
                         )}
                         <button
+                          data-plugin-edit
+                          title="编辑代码"
+                          onClick={() => openPluginEditor(p)}
+                          className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-black/40 transition-colors hover:bg-black/[0.06] hover:text-black/70 dark:text-white/40 dark:hover:bg-white/[0.1]"
+                        >
+                          <Pencil size={12} strokeWidth={2.2} />
+                        </button>
+                        <button
                           title="删除"
                           onClick={() =>
                             void pluginAction(() => window.aurora.plugins.remove(p.id))
@@ -889,28 +960,11 @@ export default function SettingsModal({
                       )}
                     </div>
                   ))}
-                  <textarea
-                    data-plugin-code
-                    rows={6}
-                    value={pluginCode}
-                    onChange={(e) => setPluginCode(e.target.value)}
-                    placeholder={`// 插件代码：返回 { meta, setup(api) }，setup 中用 api.registerTool 注册工具\nconst meta = { name: '我的插件', version: '1.0.0', description: '…' }\nfunction setup(api) {\n  api.registerTool({\n    name: 'my_tool',\n    description: '…',\n    handler: (args) => '结果',\n  })\n}\nreturn { meta, setup }`}
-                    className="w-full resize-y rounded-lg bg-black/[0.04] px-3 py-2 font-mono text-[11px] leading-relaxed text-black/70 outline-none ring-1 ring-transparent transition-shadow focus:ring-apple-blue/50 dark:bg-white/[0.07] dark:text-white/75"
-                  />
-                  <div className="flex items-center gap-2">
-                    <button
-                      data-plugin-create
-                      onClick={() => void createAndRunPlugin()}
-                      className="h-8 rounded-lg bg-apple-blue px-4 text-[12px] font-medium text-white transition-all duration-200 ease-spring hover:brightness-110 active:scale-[0.96]"
-                    >
-                      保存并运行
-                    </button>
-                    {pluginMsg && (
-                      <span className="text-[11.5px] text-black/45 dark:text-white/45">
-                        {pluginMsg}
-                      </span>
-                    )}
-                  </div>
+                  {pluginMsg && (
+                    <p className="text-[11.5px] text-black/45 dark:text-white/45">
+                      {pluginMsg}
+                    </p>
+                  )}
                 </div>
               </div>
 
@@ -983,14 +1037,21 @@ export default function SettingsModal({
                       data-settings-modelid
                       className={field}
                       value={form.modelId}
-                      onChange={(e) => setForm({ ...form, modelId: e.target.value })}
+                      onChange={(e) => {
+                        const modelId = e.target.value
+                        // 参数未被手动修改时，模型变化自动套用推荐默认值
+                        const patch = paramsDirty
+                          ? {}
+                          : defaultParamsFor(modelId)
+                        setForm({ ...form, modelId, ...patch })
+                      }}
                       placeholder="deepseek-chat"
                     />
                   </div>
                 </>
               )}
 
-              <details className="group/adv rounded-xl bg-black/[0.03] px-3 py-2 dark:bg-white/[0.04]">
+              <details data-adv-params className="group/adv rounded-xl bg-black/[0.03] px-3 py-2 dark:bg-white/[0.04]">
                 <summary className="flex cursor-pointer list-none items-center text-[12px] font-medium text-black/50 outline-none [&::-webkit-details-marker]:hidden dark:text-white/50">
                   <ChevronDown
                     size={13}
@@ -999,7 +1060,7 @@ export default function SettingsModal({
                   />
                   高级设置
                   <span className="ml-2 text-[10.5px] font-normal text-black/30 dark:text-white/30">
-                    Temperature · Max Tokens · Top P（默认即可，一般无需修改）
+                    Temperature · Max Tokens · Top P（已按模型自动适配，一般无需修改）
                   </span>
                 </summary>
                 <div className="mt-2 grid grid-cols-3 gap-3">
@@ -1012,22 +1073,25 @@ export default function SettingsModal({
                       max={2}
                       step={0.1}
                       value={form.temperature}
-                      onChange={(e) =>
+                      onChange={(e) => {
+                        setParamsDirty(true)
                         setForm({ ...form, temperature: Number(e.target.value) })
-                      }
+                      }}
                     />
                   </div>
                   <div>
                     <label className={label}>Max Tokens</label>
                     <input
+                      data-param-maxtokens
                       className={field}
                       type="number"
                       min={1}
                       step={256}
                       value={form.maxTokens}
-                      onChange={(e) =>
+                      onChange={(e) => {
+                        setParamsDirty(true)
                         setForm({ ...form, maxTokens: Number(e.target.value) })
-                      }
+                      }}
                     />
                   </div>
                   <div>
@@ -1039,7 +1103,10 @@ export default function SettingsModal({
                       max={1}
                       step={0.05}
                       value={form.topP}
-                      onChange={(e) => setForm({ ...form, topP: Number(e.target.value) })}
+                      onChange={(e) => {
+                        setParamsDirty(true)
+                        setForm({ ...form, topP: Number(e.target.value) })
+                      }}
                     />
                   </div>
                 </div>
@@ -1150,6 +1217,66 @@ export default function SettingsModal({
           </div>
         </div>
       </div>
+
+      {/* 插件代码编辑弹层 */}
+      {pluginEditor && (
+        <div
+          data-plugin-editor
+          className="absolute inset-0 z-50 flex items-center justify-center rounded-3xl bg-black/40 backdrop-blur-[2px]"
+        >
+          <div className="glass-strong flex h-[440px] w-[640px] flex-col overflow-hidden rounded-2xl p-4 shadow-glass">
+            <div className="flex items-center justify-between pb-2">
+              <span className="text-[13px] font-semibold text-black/80 dark:text-white/85">
+                {pluginEditor.isNew ? '新建插件' : '编辑插件代码'}
+                <span className="ml-2 font-mono text-[10.5px] font-normal text-black/35 dark:text-white/35">
+                  {pluginEditor.id}
+                </span>
+              </span>
+              <button
+                aria-label="关闭插件编辑器"
+                onClick={() => setPluginEditor(null)}
+                className="flex h-7 w-7 items-center justify-center rounded-full bg-black/[0.05] text-black/55 transition-colors hover:bg-black/[0.09] dark:bg-white/[0.08] dark:text-white/60"
+              >
+                <X size={14} strokeWidth={2.4} />
+              </button>
+            </div>
+            <textarea
+              data-plugin-editor-code
+              value={pluginEditor.code}
+              onChange={(e) =>
+                setPluginEditor({ ...pluginEditor, code: e.target.value })
+              }
+              spellCheck={false}
+              className="min-h-0 flex-1 resize-none rounded-xl bg-black/[0.04] px-3 py-2.5 font-mono text-[11.5px] leading-relaxed text-black/70 outline-none ring-1 ring-transparent transition-shadow focus:ring-apple-blue/50 dark:bg-white/[0.06] dark:text-white/75"
+            />
+            <div className="flex items-center gap-2 pt-2.5">
+              <button
+                data-plugin-test
+                onClick={() => void pluginTestRun()}
+                className="flex h-8 items-center gap-1.5 rounded-lg bg-black/[0.05] px-4 text-[12px] font-medium text-black/65 transition-colors hover:bg-black/[0.09] dark:bg-white/[0.08] dark:text-white/70 dark:hover:bg-white/[0.13]"
+              >
+                <Play size={12} strokeWidth={2.4} />
+                测试运行
+              </button>
+              <button
+                data-plugin-save
+                onClick={() => void pluginSave()}
+                className="h-8 rounded-lg bg-apple-blue px-5 text-[12px] font-medium text-white transition-all duration-200 ease-spring hover:brightness-110 active:scale-[0.96]"
+              >
+                保存
+              </button>
+              {pluginMsg && (
+                <span className="text-[11.5px] text-black/45 dark:text-white/45">
+                  {pluginMsg}
+                </span>
+              )}
+              <span className="ml-auto text-[10.5px] text-black/30 dark:text-white/30">
+                测试运行会立即执行代码并注册工具
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

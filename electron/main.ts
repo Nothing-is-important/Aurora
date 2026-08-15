@@ -407,10 +407,39 @@ const DOM_AUDIT = `
   out.draftActive = draftItem
     ? draftItem.className.includes('bg-apple-blue')
     : false
+  // 参数自动适配：模型 ID 输入 deepseek-reasoner → Max Tokens 应为 32768
+  const modelIdInput = document.querySelector('[data-settings-modelid]')
+  if (modelIdInput) {
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set
+    setter.call(modelIdInput, 'deepseek-reasoner')
+    modelIdInput.dispatchEvent(new Event('input', { bubbles: true }))
+  }
+  await sleep(350)
+  const advSummary = document.querySelector('[data-adv-params] summary')
+  if (advSummary) advSummary.click()
+  await sleep(250)
+  out.paramAutoAdapted = (
+    (document.querySelector('[data-param-maxtokens]') || {}).value || ''
+  ) === '32768'
   const removeBtn = document.querySelector('[data-model-remove]')
   if (removeBtn) removeBtn.click()
   await sleep(350)
   out.draftCleared = !document.querySelector('[data-unsaved-badge]')
+
+  // 插件编辑弹层：点击编辑 → 弹层出现 → 代码区有内容 → 关闭
+  const pluginEditBtn = document.querySelector('[data-plugin-edit]')
+  if (pluginEditBtn) pluginEditBtn.click()
+  await sleep(350)
+  out.pluginEditorOpen = !!document.querySelector('[data-plugin-editor]')
+  out.pluginEditorCodeLen = (
+    (document.querySelector('[data-plugin-editor-code]') || {}).value || ''
+  ).length
+  out.pluginEditorTestBtn = !!document.querySelector('[data-plugin-test]')
+  out.pluginEditorSaveBtn = !!document.querySelector('[data-plugin-save]')
+  const closePluginEditor = document.querySelector('button[aria-label="关闭插件编辑器"]')
+  if (closePluginEditor) closePluginEditor.click()
+  await sleep(300)
+  out.pluginEditorClosed = !document.querySelector('[data-plugin-editor]')
 
   // 动态插件（DPS）区块
   out.pluginRows = document.querySelectorAll('[data-plugin-row]').length
@@ -1069,6 +1098,13 @@ async function runSmoke(w: BrowserWindow, errors: string[]): Promise<void> {
   if (dom.draftItemVisible !== true) failures.push('草稿条目未出现在模型列表')
   if (dom.draftActive !== true) failures.push('草稿条目未被高亮选中')
   if (dom.draftCleared !== true) failures.push('草稿删除未生效')
+  if (dom.paramAutoAdapted !== true)
+    failures.push('模型参数自动适配未生效（reasoner 应为 32768）')
+  if (dom.pluginEditorOpen !== true) failures.push('插件编辑弹层未打开')
+  if (dom.pluginEditorCodeLen < 50) failures.push('插件编辑器代码内容缺失')
+  if (dom.pluginEditorTestBtn !== true || dom.pluginEditorSaveBtn !== true)
+    failures.push('插件编辑器按钮缺失')
+  if (dom.pluginEditorClosed !== true) failures.push('插件编辑弹层未关闭')
   if (dom.pluginRows < 1) failures.push(`设置弹窗插件列表缺失: ${dom.pluginRows}`)
   if (dom.pluginRunning !== true) failures.push('示例插件未处于运行状态')
   if (dom.settingsClosed !== true) failures.push('设置弹窗未关闭')
