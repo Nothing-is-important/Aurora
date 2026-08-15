@@ -1,7 +1,7 @@
 {
   "name": "aurora-dsh",
   "productName": "Aurora DSH",
-  "version": "0.1.12",
+  "version": "0.1.13",
   "private": true,
   "type": "module",
   "main": "main.mjs",
@@ -10,5 +10,8 @@
     "start": "electron .",
     "smoke": "node smoke.mjs",
     "make-icon": "electron scripts/make-icon.mjs"
+  },
+  "devDependencies": {
+    "rcedit": "^5.0.2"
   }
 }

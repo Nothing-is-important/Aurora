@@ -15,6 +15,7 @@ extraResources:
   - from: assets/dsh-runtime.zip
     to: dsh-runtime.zip
 electronVersion: 43.4.0
+afterPack: scripts/after-pack.cjs
 win:
   target:
     - nsis
