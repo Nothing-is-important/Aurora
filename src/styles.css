@@ -114,6 +114,17 @@ body {
   background: rgba(10, 132, 255, 0.28);
 }
 
+/* 数字输入框：隐藏上下箭头（Temperature/Max Tokens/Top P 直接输入） */
+input[type='number']::-webkit-outer-spin-button,
+input[type='number']::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type='number'] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
 /* 玻璃材质 */
 .glass {
   @apply backdrop-blur-2xl bg-white/60 dark:bg-[#17171d]/60 border border-black/[0.06] dark:border-white/[0.08];
