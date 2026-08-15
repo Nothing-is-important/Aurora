@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { ArrowUp, Square, Wrench, ChevronRight } from 'lucide-react'
-import type { ChatMessage } from '../types'
+import { ArrowUp, Square, Wrench, ChevronRight, ChevronDown, Settings2, Cpu } from 'lucide-react'
+import type { ChatMessage, LlmState } from '../types'
 import { Markdown } from './Markdown'
 
 function MessageBubble({ msg }: { msg: ChatMessage }) {
@@ -76,17 +76,39 @@ interface Props {
   messages: ChatMessage[]
   streaming: boolean
   ready: boolean
+  llm: LlmState | null
+  onLlmSelect: (provider: string, model: string) => Promise<void>
+  onOpenSettings: () => void
   onSend: (text: string) => void
   onStop: () => void
 }
 
-export default function ChatArea({ messages, streaming, ready, onSend, onStop }: Props) {
+export default function ChatArea({
+  messages,
+  streaming,
+  ready,
+  llm,
+  onLlmSelect,
+  onOpenSettings,
+  onSend,
+  onStop,
+}: Props) {
   const [input, setInput] = useState('')
+  const [menuOpen, setMenuOpen] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
   }, [messages])
+
+  useEffect(() => {
+    const onClick = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false)
+    }
+    window.addEventListener('mousedown', onClick)
+    return () => window.removeEventListener('mousedown', onClick)
+  }, [])
 
   const submit = () => {
     const t = input.trim()
@@ -95,8 +117,67 @@ export default function ChatArea({ messages, streaming, ready, onSend, onStop }:
     setInput('')
   }
 
+  const currentProvider = llm?.providers.find((p) => p.id === llm.current.provider)
+  const currentModel = currentProvider?.models.find((m) => m.id === llm.current.model)
+  const modelLabel = currentModel?.name ?? llm?.current.model ?? '选择模型'
+
   return (
     <main className="flex min-w-0 flex-1 flex-col">
+      {/* 顶部工具行：模型选择 + 设置 */}
+      <div className="flex shrink-0 items-center justify-between px-6 pb-1 pt-2">
+        <div className="relative" ref={menuRef}>
+          <button
+            data-model-pill
+            title="切换模型"
+            onClick={() => setMenuOpen((v) => !v)}
+            className="flex items-center gap-1.5 rounded-full bg-black/[0.05] px-3 py-1.5 text-[12px] font-medium text-black/70 transition-colors hover:bg-black/[0.09] dark:bg-white/[0.07] dark:text-white/70 dark:hover:bg-white/[0.12]"
+          >
+            <Cpu size={12} strokeWidth={2.2} className="text-apple-blue" />
+            {modelLabel}
+            <ChevronDown size={12} className={`transition-transform ${menuOpen ? 'rotate-180' : ''}`} />
+          </button>
+          {menuOpen && llm && (
+            <div className="absolute left-0 top-9 z-30 max-h-72 w-64 overflow-y-auto rounded-xl border border-black/[0.08] bg-white/95 p-1.5 shadow-glass backdrop-blur-2xl dark:border-white/[0.1] dark:bg-[#1c1c23]/95">
+              {llm.providers.map((p) => (
+                <div key={p.id}>
+                  <p className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-black/35 dark:text-white/35">
+                    {p.name}
+                  </p>
+                  {p.models.map((m) => (
+                    <button
+                      key={m.id}
+                      onClick={() => {
+                        setMenuOpen(false)
+                        void onLlmSelect(p.id, m.id)
+                      }}
+                      className={`flex w-full items-center justify-between rounded-lg px-2 py-1.5 text-left text-[12px] transition-colors ${
+                        llm.current.provider === p.id && llm.current.model === m.id
+                          ? 'bg-apple-blue/12 font-medium text-apple-blue dark:bg-apple-blue/20'
+                          : 'text-black/70 hover:bg-black/[0.05] dark:text-white/70 dark:hover:bg-white/[0.06]'
+                      }`}
+                    >
+                      {m.name}
+                      {m.contextWindow ? (
+                        <span className="text-[9.5px] text-black/35 dark:text-white/35">
+                          {Math.round(m.contextWindow / 1024)}K
+                        </span>
+                      ) : null}
+                    </button>
+                  ))}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+        <button
+          title="设置"
+          data-open-settings
+          onClick={onOpenSettings}
+          className="flex h-7 w-7 items-center justify-center rounded-lg text-black/45 transition-colors hover:bg-black/[0.06] hover:text-apple-blue dark:text-white/45 dark:hover:bg-white/[0.08]"
+        >
+          <Settings2 size={14} strokeWidth={2.2} />
+        </button>
+      </div>
       <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
         {messages.length === 0 && (
           <div className="flex h-full flex-col items-center justify-center gap-3 text-center">

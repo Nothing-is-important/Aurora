@@ -1,7 +1,7 @@
 // Aurora 原生客户端主进程：进程内 DSH 引擎 + IPC 桥接（会话/流式/工具事件）
 import { app, BrowserWindow, ipcMain, Menu, globalShortcut } from 'electron'
 import { randomUUID } from 'node:crypto'
-import { mkdirSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { join } from 'node:path'
 import { bootEngine, disposeEngine, runtimeDir } from './engine.mjs'
@@ -13,11 +13,11 @@ const SMOKE = process.env.SMOKE === '1'
 app.setPath('userData', join(app.getPath('appData'), 'aurora-native'))
 
 const DEV_URL = process.env.AURORA_DEV_URL ?? null // vite dev server（可选）
-const dshHome = join(app.getPath('userData'), 'dsh-home')
 
 let win = null
 let ctx = null
 let quitting = false
+let bootUrl = null
 
 function mintSessionId() {
   return `aurora-${randomUUID()}`
@@ -104,11 +104,107 @@ function stopAgent(sessionId) {
   if (agent) agent.cancel({ kind: 'user' })
 }
 
+// ---------- Aurora 应用设置（userData/settings.json：DSH 数据目录等） ----------
+let appSettings = {}
+function saveAppSettings() {
+  const file = join(app.getPath('userData'), 'settings.json')
+  writeFileSync(file, JSON.stringify(appSettings, null, 2), 'utf8')
+}
+
+ipcMain.handle('app:settings:get', () => ({ dshHome: appSettings.dshHome ?? '' }))
+ipcMain.handle('app:settings:set', async (_e, patch) => {
+  const oldHome = appSettings.dshHome
+  Object.assign(appSettings, patch)
+  saveAppSettings()
+  const newHome = appSettings.dshHome
+  if (newHome && newHome !== oldHome) {
+    // 数据目录变更：重启引擎（会话与凭据全部来自新目录）
+    try {
+      await disposeEngine()
+    } catch {
+      /* 引擎可能已停 */
+    }
+    ctx = null
+    try {
+      const booted = await bootEngine(newHome)
+      ctx = booted.ctx
+      if (sessionEventsOff) sessionEventsOff()
+      sessionEventsOff = registerSessionEvents()
+      return { restarted: true }
+    } catch (err) {
+      console.error('[aurora-native] re-boot failed:', err.message)
+      return { restarted: false, error: err.message }
+    }
+  }
+  return { restarted: false }
+})
+
+// ---------- 模型与凭据桥 ----------
+function llmState() {
+  const c = engine()
+  const configured = (c.llm.listConfigurableProviders?.() ?? []).map((p) => ({
+    id: p.provider,
+    name: p.displayName,
+    settingsNs: p.settingsNs,
+  }))
+  const live = new Set(c.llm.listProviders?.().map((p) => p.id) ?? [])
+  let current = { provider: '', model: '' }
+  try {
+    current = c.agentDefaultModel.currentSelection() ?? { provider: '', model: '' }
+  } catch {
+    /* 无选择 */
+  }
+  // 每个提供商的模型目录（从 settings 命名空间的解析值取 models）
+  const providers = configured.map((p) => {
+    let models = []
+    try {
+      const desc = c.settings.describe({ redactSecrets: true }).find((x) => x.ns === p.settingsNs)
+      models = Array.isArray(desc?.value?.models)
+        ? desc.value.models.map((m) => ({ id: m.id, name: m.name ?? m.id, contextWindow: m.contextWindow }))
+        : []
+    } catch {
+      /* 目录缺失 */
+    }
+    return { ...p, live: live.has(p.id), models }
+  })
+  return { providers, current }
+}
+
+function registerSessionEvents() {
+  const off = ctx.on('session/event', (session, event) => {
+    if (!win || win.isDestroyed()) return
+    win.webContents.send('chat:event', {
+      sessionId: session.id,
+      event: { type: event.type, seq: event.seq, time: event.time, data: event.data },
+    })
+  })
+  return off
+}
+
+let sessionEventsOff = null
+
 function registerBridge() {
   ipcMain.handle('sessions:list', () => listSessions())
   ipcMain.handle('sessions:open', (_e, sessionId) => openSession(sessionId))
   ipcMain.handle('chat:send', (_e, sessionId, text) => sendMessage(sessionId, text))
   ipcMain.on('chat:stop', (_e, sessionId) => stopAgent(sessionId))
+  ipcMain.handle('llm:state', () => llmState())
+  ipcMain.handle('llm:select', (_e, provider, model) => {
+    engine().agentDefaultModel.saveSelection({ provider, model })
+    return llmState()
+  })
+  ipcMain.handle('credentials:has', async (_e, ref) => {
+    const hit = await engine().credentials.resolve(ref)
+    return hit !== undefined
+  })
+  ipcMain.handle('credentials:set', async (_e, ref, value) => {
+    await engine().credentials.set(ref, String(value))
+    return true
+  })
+  ipcMain.handle('credentials:unset', async (_e, ref) => {
+    await engine().credentials.unset(ref)
+    return true
+  })
   ipcMain.on('win:minimize', () => win?.minimize())
   ipcMain.on('win:toggle-maximize', () => {
     if (!win) return
@@ -117,15 +213,8 @@ function registerBridge() {
   })
   ipcMain.on('win:close', () => win?.close())
 
-  // 会话事件流 → 渲染层（按 sessionId 过滤转发）
-  const off = ctx.on('session/event', (session, event) => {
-    if (!win || win.isDestroyed()) return
-    win.webContents.send('chat:event', {
-      sessionId: session.id,
-      event: { type: event.type, seq: event.seq, time: event.time, data: event.data },
-    })
-  })
-  app.on('will-quit', () => off())
+  if (sessionEventsOff) sessionEventsOff()
+  sessionEventsOff = registerSessionEvents()
 }
 
 // ---------- 窗口 ----------
@@ -165,10 +254,21 @@ function createWindow() {
 app.whenReady().then(async () => {
   Menu.setApplicationMenu(null)
   try {
+    // 读取 Aurora 应用设置（DSH 数据目录）
+    const appSettingsFile = join(app.getPath('userData'), 'settings.json')
+    try {
+      if (existsSync(appSettingsFile)) {
+        appSettings = JSON.parse(readFileSync(appSettingsFile, 'utf8'))
+      }
+    } catch {
+      appSettings = {}
+    }
+    const dshHome = (appSettings.dshHome && String(appSettings.dshHome).trim()) || join(app.getPath('userData'), 'dsh-home')
     mkdirSync(dshHome, { recursive: true })
     const booted = await bootEngine(dshHome)
     ctx = booted.ctx
-    console.log('[aurora-native] engine booted', booted.url ? `(web at ${booted.url})` : '(headless)')
+    bootUrl = booted.url
+    console.log('[aurora-native] engine booted', bootUrl ? `(web at ${bootUrl})` : '(headless)', 'home =', dshHome)
     registerBridge()
     createWindow()
     globalShortcut.register('CommandOrControl+Shift+A', () => {
@@ -211,7 +311,7 @@ async function runSmoke() {
   }
   try {
     ok('engineBooted', !!ctx)
-    ok('webServing', !!(await fetch((await bootEngine(dshHome)).url)).ok, 'fetch ok')
+    ok('webServing', bootUrl ? (await fetch(bootUrl)).ok : false, bootUrl)
 
     // 会话创建 + 事件流 + 历史回放
     const sid = mintSessionId()
@@ -243,6 +343,28 @@ async function runSmoke() {
     const list = await listSessions()
     ok('sessionListed', list.some((s) => s.id === sid), list.length)
 
+    // 模型目录 + 默认模型选择
+    const st = llmState()
+    ok('llmProvidersListed', st.providers.length >= 1, st.providers.map((p) => p.id))
+    ok(
+      'llmModelsCatalogued',
+      st.providers.some((p) => p.models.length >= 1),
+      st.providers.map((p) => ({ id: p.id, models: p.models.length })),
+    )
+    const first = st.providers.find((p) => p.models.length > 0)
+    if (first) {
+      await engine().agentDefaultModel.saveSelection({ provider: first.id, model: first.models[0].id })
+      const cur = llmState().current
+      ok('llmSelectionSaved', cur.provider === first.id && cur.model === first.models[0].id, cur)
+    }
+
+    // 凭据 roundtrip（写入 .credentials.yaml → 读取存在 → 删除）
+    const credRef = 'AURORA_SMOKE_KEY'
+    await engine().credentials.set(credRef, 'sk-smoke')
+    ok('credentialStored', (await engine().credentials.resolve(credRef)) !== undefined)
+    await engine().credentials.unset(credRef)
+    ok('credentialCleared', (await engine().credentials.resolve(credRef)) === undefined)
+
     // 渲染层加载
     await sleep(3000)
     ok('windowLoaded', win && win.webContents.getURL().length > 0, win?.webContents.getURL())
@@ -253,6 +375,36 @@ async function runSmoke() {
       sendBtn: !!document.querySelector('[data-send]'),
     })`).catch((e) => ({ error: String(e) }))
     ok('auroraUiRendered', dom.input === true && dom.sidebar === true, dom)
+
+    // UI 交互：打开设置 → 面板/密钥框/模型选项就位 → 关闭
+    const uiFlow = await win.webContents
+      .executeJavaScript(`(async () => {
+        const out = {}
+        out.modelPill = !!document.querySelector('[data-model-pill]')
+        document.querySelector('[data-open-settings]')?.click()
+        await new Promise((r) => setTimeout(r, 700))
+        out.settingsOpen = !!document.querySelector('[data-settings]')
+        out.apiKeyInput = !!document.querySelector('[data-api-key]')
+        out.modelOptions = document.querySelectorAll('[data-model-option]').length
+        out.dshHomeInput = !!document.querySelector('[data-dsh-home]')
+        // 关闭（点遮罩）
+        const backdrop = document.querySelector('[data-settings]')
+        backdrop?.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+        await new Promise((r) => setTimeout(r, 300))
+        out.settingsClosed = !document.querySelector('[data-settings]')
+        return out
+      })()`)
+      .catch((e) => ({ error: String(e) }))
+    ok(
+      'settingsUiWorks',
+      uiFlow.settingsOpen === true &&
+        uiFlow.apiKeyInput === true &&
+        uiFlow.modelOptions >= 1 &&
+        uiFlow.dshHomeInput === true &&
+        uiFlow.settingsClosed === true &&
+        uiFlow.modelPill === true,
+      uiFlow,
+    )
 
     const img = await win.webContents.capturePage()
     const shot = join(app.getPath('userData'), 'smoke-screenshot.png')

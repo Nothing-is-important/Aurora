@@ -119,6 +119,7 @@ export interface UseChatResult {
   messages: ChatMessage[]
   streaming: boolean
   ready: boolean
+  refreshSessions: () => Promise<void>
   openSession: (id: string) => Promise<void>
   newChat: () => void
   send: (text: string) => Promise<void>
@@ -201,5 +202,5 @@ export function useChat(): UseChatResult {
     setStreaming(false)
   }, [])
 
-  return { sessions, sessionId, messages, streaming, ready, openSession, newChat, send, stop }
+  return { sessions, sessionId, messages, streaming, ready, refreshSessions, openSession, newChat, send, stop }
 }

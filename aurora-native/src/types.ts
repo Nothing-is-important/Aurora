@@ -60,6 +60,19 @@ declare global {
         stop: (sessionId: string) => void
         onEvent: (cb: (p: { sessionId: string; event: SessionEventPayload }) => void) => () => void
       }
+      llm: {
+        state: () => Promise<LlmState>
+        select: (provider: string, model: string) => Promise<LlmState>
+      }
+      credentials: {
+        has: (ref: string) => Promise<boolean>
+        set: (ref: string, value: string) => Promise<boolean>
+        unset: (ref: string) => Promise<boolean>
+      }
+      appSettings: {
+        get: () => Promise<{ dshHome: string }>
+        set: (patch: { dshHome?: string }) => Promise<{ restarted: boolean; error?: string }>
+      }
       window: {
         minimize: () => void
         toggleMaximize: () => void
@@ -67,4 +80,23 @@ declare global {
       }
     }
   }
+}
+
+export interface LlmModelInfo {
+  id: string
+  name: string
+  contextWindow?: number
+}
+
+export interface LlmProviderInfo {
+  id: string
+  name: string
+  settingsNs: string
+  live: boolean
+  models: LlmModelInfo[]
+}
+
+export interface LlmState {
+  providers: LlmProviderInfo[]
+  current: { provider: string; model: string }
 }
