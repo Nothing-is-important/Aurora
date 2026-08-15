@@ -433,9 +433,11 @@ function AppInner() {
 
       <SettingsModal
         open={settingsOpen}
-        models={chat.models}
         onClose={() => setSettingsOpen(false)}
-        onChanged={() => void chat.reloadModels()}
+        onChanged={() => {
+          void chat.reloadProviders()
+          void chat.reloadModels()
+        }}
         onModesChanged={() => void chat.reloadModes()}
       />
 

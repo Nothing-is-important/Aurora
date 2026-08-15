@@ -432,17 +432,21 @@ export function useChat(opts: UseChatOptions): ChatController {
   )
 
   // 冒烟模式：模型加载后自动发起 Mock 对话
+  // 注意：不使用 effect 清理函数取消定时器——send 依赖 messages/models/modeId，
+  // 加载期间这些状态一旦变化会触发 effect 重跑并清掉定时器，导致自动对话永不发起。
+  // 通过 sendRef 永远取最新 send，避免竞态。
+  const sendRef = useRef(send)
+  sendRef.current = send
   useEffect(() => {
     if (!window.aurora.smoke || smokeAutoStarted || models.length === 0) return
     smokeAutoStarted = true
-    const mock = models.find((m) => m.provider === 'mock')
+    const mock = models.find((m) => m.providerKind === 'mock')
     if (mock) {
-      const t = setTimeout(() => {
-        send('冒烟测试：请演示一个包含代码、公式和列表的综合示例', mock.id)
+      setTimeout(() => {
+        sendRef.current('冒烟测试：请演示一个包含代码、公式和列表的综合示例', mock.id)
       }, 250)
-      return () => clearTimeout(t)
     }
-  }, [models, send])
+  }, [models])
 
   const stop = useCallback(() => {
     const id = streamingRef.current

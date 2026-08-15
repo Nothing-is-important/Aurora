@@ -12,3 +12,5 @@ Thumbs.db
 .env.*
 .npmrc
 docs/xiaohongshu-文案.md
+
+smoke-out*.txt
