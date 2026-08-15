@@ -1,7 +1,7 @@
 {
   "name": "aurora-native",
   "productName": "Aurora",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "private": true,
   "type": "module",
   "main": "electron/main.mjs",

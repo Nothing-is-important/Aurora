@@ -1,10 +1,11 @@
 // Aurora 原生客户端主进程：进程内 DSH 引擎 + IPC 桥接（会话/流式/工具事件）
-import { app, BrowserWindow, ipcMain, Menu, globalShortcut } from 'electron'
+import { app, BrowserWindow, ipcMain, Menu, globalShortcut, dialog } from 'electron'
 import { randomUUID } from 'node:crypto'
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { join } from 'node:path'
 import { bootEngine, disposeEngine, runtimeDir } from './engine.mjs'
+import { KnowledgeBase, registerKbTool } from './kb.mjs'
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url))
 const SMOKE = process.env.SMOKE === '1'
@@ -20,6 +21,12 @@ let quitting = false
 let bootUrl = null
 let activeDshHome = null
 let panelAgentHandle = null
+let kb = null
+
+/** 知识库工具注入：在每次 agent 创建/恢复的 setup 里注册进该 agent 作用域 */
+function kbSetup(agentCtx) {
+  if (kb) registerKbTool(agentCtx, kb)
+}
 
 function mintSessionId() {
   return `aurora-${randomUUID()}`
@@ -73,7 +80,7 @@ async function openSession(sessionId) {
   const c = engine()
   let session = c.sessions.get(sessionId)
   if (!session) {
-    const handle = await c.agents.resume({ resumeSessionId: sessionId })
+    const handle = await c.agents.resume({ resumeSessionId: sessionId, setup: kbSetup })
     session = handle.agent.session
   }
   return { events: session.events, live: !!c.agents.get(sessionId) }
@@ -87,12 +94,13 @@ async function sendMessage(sessionId, text) {
     // 会话已持久化但无活动 agent → resume；否则全新创建
     let session = c.sessions.get(sessionId)
     if (session) {
-      const handle = await c.agents.resume({ resumeSessionId: sessionId })
+      const handle = await c.agents.resume({ resumeSessionId: sessionId, setup: kbSetup })
       agent = handle.agent
     } else {
       const handle = await c.agents.create({
         sessionId,
         meta: { cwd: app.getPath('documents') },
+        setup: kbSetup,
       })
       agent = handle.agent
     }
@@ -118,6 +126,7 @@ async function ensurePanelAgent() {
   const handle = await c.agents.create({
     sessionId: `aurora-panel-${randomUUID()}`,
     meta: { cwd: app.getPath('documents') },
+    setup: kbSetup,
   })
   panelAgentHandle = handle
   return handle
@@ -134,6 +143,7 @@ async function forkChat(sessionId, boundarySeq, text) {
     sessionId: childId,
     seed,
     meta: { cwd: app.getPath('documents'), parentSession: sessionId },
+    setup: kbSetup,
   })
   handle.agent.followup({ role: 'user', content: text })
   return { sessionId: childId }
@@ -166,7 +176,7 @@ ipcMain.handle('app:settings:set', async (_e, patch) => {
       bootUrl = booted.url
       activeDshHome = newHome
       panelAgentHandle = null
-      if (sessionEventsOff) sessionEventsOff()
+        if (sessionEventsOff) sessionEventsOff()
       sessionEventsOff = registerSessionEvents()
       return { restarted: true }
     } catch (err) {
@@ -344,7 +354,7 @@ function registerBridge() {
       const booted = await bootEngine(activeDshHome)
       ctx = booted.ctx
       bootUrl = booted.url
-      if (sessionEventsOff) sessionEventsOff()
+        if (sessionEventsOff) sessionEventsOff()
       sessionEventsOff = registerSessionEvents()
       return { restarted: true }
     } catch (err) {
@@ -393,6 +403,27 @@ function registerBridge() {
     const { agent } = await ensurePanelAgent()
     return engine().dynamicCordisRunner.undefine(agent, pluginId)
   })
+  // 知识库 RAG（引擎工具 kb_search + 面板管理）
+  ipcMain.handle('kb:add-folder', async () => {
+    const r = await dialog.showOpenDialog(win ?? undefined, {
+      title: '添加知识库文件夹',
+      properties: ['openDirectory'],
+    })
+    if (r.canceled || !r.filePaths[0]) return { added: 0 }
+    const added = await kb.addFolder(r.filePaths[0])
+    return { added, folder: r.filePaths[0] }
+  })
+  ipcMain.handle('kb:list', () => ({ folders: kb.folders(), docCount: kb.docs.length }))
+  ipcMain.handle('kb:remove', (_e, folder) => {
+    kb.remove(folder)
+    return { folders: kb.folders(), docCount: kb.docs.length }
+  })
+  ipcMain.handle('kb:rebuild', () => {
+    kb.rebuildIndex()
+    kb.persist()
+    return { docCount: kb.docs.length }
+  })
+  ipcMain.handle('kb:search', (_e, query) => kb.search(String(query), 5))
   ipcMain.on('win:minimize', () => win?.minimize())
   ipcMain.on('win:toggle-maximize', () => {
     if (!win) return
@@ -457,6 +488,7 @@ app.whenReady().then(async () => {
     const booted = await bootEngine(dshHome)
     ctx = booted.ctx
     bootUrl = booted.url
+    kb = new KnowledgeBase(join(app.getPath('userData'), 'kb'))
     console.log('[aurora-native] engine booted', bootUrl ? `(web at ${bootUrl})` : '(headless)', 'home =', dshHome)
     registerBridge()
     createWindow()
@@ -620,6 +652,18 @@ async function runSmoke() {
       const inv2 = engine().dynamicCordisRunner.inventory() ?? []
       ok('pluginUndefined', !inv2.some((r) => r.pluginId === receipt.pluginId), { un, left: inv2.map((r) => r.pluginId) })
     }
+
+    // 知识库 RAG：添加临时文件夹 → BM25 检索命中 → 工具已注册进引擎
+    const kbDir = join(app.getPath('temp'), `aurora-kb-smoke-${process.pid}`)
+    mkdirSync(kbDir, { recursive: true })
+    writeFileSync(join(kbDir, 'aurora-冒烟知识库文档.md'), '# 冒烟测试\n\n这是独一无二的紫罗兰独角兽关键词文档。\n', 'utf8')
+    const kbAdded = await kb.addFolder(kbDir)
+    ok('kbFolderIndexed', kbAdded >= 1, kbAdded)
+    const kbHits = kb.search('紫罗兰独角兽')
+    ok('kbSearchHits', kbHits.length >= 1 && kbHits[0].snippet.includes('紫罗兰'), kbHits)
+    const kbSchemas = ctx.tools.schemas(agent)
+    ok('kbToolRegistered', kbSchemas.some((s) => s.name === 'kb_search'), kbSchemas.map((s) => s.name))
+    kb.remove(kbDir)
 
     // 渲染层加载
     await sleep(3000)

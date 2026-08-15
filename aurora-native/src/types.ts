@@ -92,6 +92,13 @@ declare global {
         stop: (pluginId: string) => Promise<unknown>
         undefine: (pluginId: string) => Promise<unknown>
       }
+      kb: {
+        addFolder: () => Promise<{ added: number; folder?: string }>
+        list: () => Promise<{ folders: string[]; docCount: number }>
+        remove: (folder: string) => Promise<{ folders: string[]; docCount: number }>
+        rebuild: () => Promise<{ docCount: number }>
+        search: (query: string) => Promise<KbHit[]>
+      }
       window: {
         minimize: () => void
         toggleMaximize: () => void
@@ -152,4 +159,10 @@ export interface PluginRunResult {
   requestId?: string
   pluginRunId?: string
   error?: unknown
+}
+
+export interface KbHit {
+  path: string
+  snippet: string
+  score: number
 }

@@ -41,6 +41,13 @@ contextBridge.exposeInMainWorld('aurora', {
     stop: (pluginId) => ipcRenderer.invoke('plugins:stop', pluginId),
     undefine: (pluginId) => ipcRenderer.invoke('plugins:undefine', pluginId),
   },
+  kb: {
+    addFolder: () => ipcRenderer.invoke('kb:add-folder'),
+    list: () => ipcRenderer.invoke('kb:list'),
+    remove: (folder) => ipcRenderer.invoke('kb:remove', folder),
+    rebuild: () => ipcRenderer.invoke('kb:rebuild'),
+    search: (query) => ipcRenderer.invoke('kb:search', query),
+  },
   window: {
     minimize: () => ipcRenderer.send('win:minimize'),
     toggleMaximize: () => ipcRenderer.send('win:toggle-maximize'),

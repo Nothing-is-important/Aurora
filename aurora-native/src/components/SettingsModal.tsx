@@ -62,6 +62,21 @@ export default function SettingsModal({ open, onClose, onEngineRestarted }: Prop
   const [pluginMsg, setPluginMsg] = useState('')
   const [pluginDefineBusy, setPluginDefineBusy] = useState(false)
   const [pluginActionBusy, setPluginActionBusy] = useState<string | null>(null)
+  const [kbFolders, setKbFolders] = useState<string[]>([])
+  const [kbDocCount, setKbDocCount] = useState(0)
+  const [kbQuery, setKbQuery] = useState('')
+  const [kbHits, setKbHits] = useState<{ path: string; snippet: string; score: number }[]>([])
+  const [kbBusy, setKbBusy] = useState(false)
+
+  const refreshKb = async () => {
+    try {
+      const r = await window.aurora.kb.list()
+      setKbFolders(r.folders ?? [])
+      setKbDocCount(r.docCount ?? 0)
+    } catch (err) {
+      console.error('kb:list failed', err)
+    }
+  }
 
   const refreshPlugins = async () => {
     try {
@@ -86,6 +101,7 @@ export default function SettingsModal({ open, onClose, onEngineRestarted }: Prop
     void window.aurora.appSettings.get().then((s) => setDshHome(s.dshHome ?? ''))
     void window.aurora.mcp.get().then(setMcpYaml)
     void refreshPlugins()
+    void refreshKb()
   }, [open])
 
   if (!open) return null
@@ -530,6 +546,109 @@ export default function SettingsModal({ open, onClose, onEngineRestarted }: Prop
               </button>
               {pluginMsg && <span className="text-[11px] text-black/50 dark:text-white/50">{pluginMsg}</span>}
             </div>
+          </section>
+
+          {/* 知识库 RAG（引擎工具 kb_search） */}
+          <section>
+            <h3 className="mb-2 flex items-center gap-1.5 text-[12.5px] font-semibold text-black/70 dark:text-white/70">
+              <FolderOpen size={13} strokeWidth={2.2} /> 知识库（RAG）
+            </h3>
+            <p className="mb-2 text-[11.5px] leading-relaxed text-black/40 dark:text-white/40">
+              添加文件夹后建立 BM25 索引；引擎注册了 `kb_search` 工具，模型回答时会
+              自动检索你的资料。当前 {kbDocCount} 篇文档。
+            </p>
+            <div className="space-y-1.5">
+              {kbFolders.length === 0 && (
+                <p className="rounded-lg bg-black/[0.03] px-3 py-2 text-[11.5px] text-black/40 dark:bg-white/[0.05] dark:text-white/40">
+                  暂无知识库文件夹。
+                </p>
+              )}
+              {kbFolders.map((f) => (
+                <div
+                  key={f}
+                  data-kb-row
+                  className="flex items-center gap-2 rounded-xl bg-black/[0.035] px-3 py-2 dark:bg-white/[0.05]"
+                >
+                  <span className="min-w-0 flex-1 truncate text-[12px] text-black/75 dark:text-white/80">
+                    {f}
+                  </span>
+                  <button
+                    title="移除"
+                    onClick={() =>
+                      void window.aurora.kb.remove(f).then((r) => {
+                        setKbFolders(r.folders ?? [])
+                        setKbDocCount(r.docCount ?? 0)
+                      })
+                    }
+                    className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-black/35 transition-colors hover:bg-apple-red/10 hover:text-apple-red dark:text-white/35"
+                  >
+                    <Trash2 size={11} strokeWidth={2.2} />
+                  </button>
+                </div>
+              ))}
+            </div>
+            <div className="mt-2 flex gap-2">
+              <button
+                data-kb-add
+                disabled={kbBusy}
+                onClick={() =>
+                  void window.aurora.kb.addFolder().then((r) => {
+                    if (r.added > 0) void refreshKb()
+                  })
+                }
+                className="h-8 rounded-lg bg-apple-blue px-4 text-[12px] font-medium text-white transition-all hover:brightness-110 active:scale-95 disabled:opacity-60"
+              >
+                添加文件夹…
+              </button>
+              <button
+                data-kb-rebuild
+                disabled={kbBusy}
+                onClick={() => void window.aurora.kb.rebuild().then(() => void refreshKb())}
+                className="h-8 rounded-lg bg-black/[0.05] px-4 text-[12px] font-medium text-black/60 transition-colors hover:bg-black/[0.09] dark:bg-white/[0.07] dark:text-white/60"
+              >
+                重建索引
+              </button>
+            </div>
+            <div className="mt-2 flex gap-2">
+              <input
+                data-kb-query
+                className={field}
+                placeholder="测试检索：输入关键词查看命中…"
+                value={kbQuery}
+                onChange={(e) => setKbQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    void window.aurora.kb.search(kbQuery.trim()).then(setKbHits)
+                  }
+                }}
+              />
+              <button
+                data-kb-search
+                disabled={!kbQuery.trim()}
+                onClick={() => void window.aurora.kb.search(kbQuery.trim()).then(setKbHits)}
+                className="h-9 shrink-0 rounded-lg bg-apple-blue px-4 text-[12px] font-medium text-white transition-all hover:brightness-110 active:scale-95 disabled:opacity-40"
+              >
+                检索
+              </button>
+            </div>
+            {kbHits.length > 0 && (
+              <div className="mt-2 space-y-1.5">
+                {kbHits.map((h, i) => (
+                  <div
+                    key={i}
+                    data-kb-hit
+                    className="rounded-lg bg-black/[0.03] px-3 py-2 dark:bg-white/[0.05]"
+                  >
+                    <p className="text-[11px] font-medium text-black/70 dark:text-white/75">
+                      {h.path} <span className="ml-1 text-black/35 dark:text-white/35">({h.score})</span>
+                    </p>
+                    <p className="mt-0.5 text-[11px] leading-relaxed text-black/50 dark:text-white/50">
+                      {h.snippet}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            )}
           </section>
         </div>
       </div>
