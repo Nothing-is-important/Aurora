@@ -1,7 +1,7 @@
 {
   "name": "aurora-dsh",
   "productName": "Aurora DSH",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "private": true,
   "type": "module",
   "main": "main.mjs",

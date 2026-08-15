@@ -15,7 +15,7 @@ const buf = img.toBitmap()
 
 const sample = (x, y) => {
   const i = (y * width + x) * 4
-  return [buf[i + 2], buf[i + 1], buf[i]] // R,G,B
+  return [buf[i + 2], buf[i + 1], buf[i], buf[i + 3]] // R,G,B,A
 }
 
 // 采样网格 + 统计亮度分布（深色界面应有大量暗像素、少量亮文字像素）
@@ -33,6 +33,9 @@ for (let y = 0; y < height; y += 24) {
     if (grid.length < 12) grid.push(`${x},${y}=rgb(${r},${g},${b})`)
   }
 }
+// 图标检查：四角透明度 + 中心颜色（验证无黑框、渐变正常）
+const cornerA = [sample(2, 2)[3], sample(width - 3, 2)[3], sample(2, height - 3)[3], sample(width - 3, height - 3)[3]]
+const center = sample(Math.floor(width / 2), Math.floor(height / 2))
 console.log(JSON.stringify({
   file,
   bytes,
@@ -41,6 +44,8 @@ console.log(JSON.stringify({
   darkPct: +(dark / total).toFixed(3),
   lightPct: +(light / total).toFixed(3),
   corner: sample(0, 0),
+  cornerAlpha: cornerA,
+  center: center,
   samples: grid,
 }, null, 2))
 app.exit(0)
