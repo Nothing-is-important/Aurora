@@ -1,6 +1,6 @@
 // DSH 引擎进程内嵌入：自定义 boot（跳过 HMR/watch，生产客户端不需要热重载）
-import { mkdirSync, writeFileSync, existsSync, readFileSync } from 'node:fs'
-import { pathToFileURL } from 'node:url'
+import { mkdirSync, writeFileSync, existsSync, readFileSync, readdirSync, cpSync, rmSync } from 'node:fs'
+import { pathToFileURL, fileURLToPath } from 'node:url'
 import { join } from 'node:path'
 
 const PROFILE_ROOT_CONFIG = `# dsh profile root — an empty entry list. The tree is composed as patches:
@@ -35,6 +35,27 @@ export async function bootEngine(home) {
     mkdirSync(home, { recursive: true })
     process.env.DSH_HOME = home
 
+    // 内置 Aurora 预设（anchored）→ home/presets（缺失时拷贝，尊重用户修改）
+    // 开发模式下 resourcesPath 也指向 electron 二进制目录：以 dsh-runtime.zip
+    // 是否存在判断「打包态」，否则用仓库内预设目录。
+    const devPresets = join(fileURLToPath(new URL('..', import.meta.url)), 'presets')
+    const srcPresets =
+      process.resourcesPath && existsSync(join(process.resourcesPath, 'dsh-runtime.zip'))
+        ? join(process.resourcesPath, 'presets')
+        : devPresets
+    if (existsSync(srcPresets)) {
+      const destPresets = join(home, 'presets')
+      mkdirSync(destPresets, { recursive: true })
+      for (const name of readdirSync(srcPresets)) {
+        const src = join(srcPresets, name)
+        const dest = join(destPresets, name)
+        // Aurora 自带预设总是覆盖（随应用更新）；用户自建预设不受影响
+        if (existsSync(dest)) rmSync(dest, { recursive: true, force: true })
+        cpSync(src, dest, { recursive: true })
+      }
+      console.log('[engine] presets copied:', srcPresets, '→', destPresets)
+    }
+
     const appBoot = await importRuntime('dsh-app-boot/lib/index.js')
     const cmdline = await importRuntime('dsh-cmdline/lib/index.js')
     const launchEnv = await importRuntime('dsh-launch-environment/lib/index.js')
@@ -60,11 +81,18 @@ export async function bootEngine(home) {
     }
     const overlays = []
     if (rows.has('agent-presets')) {
+      // 预设根：官方内置 + 用户级（Aurora 自定义模式，如 anchored）
+      const roots = [{ path: join(DSH_DIR(), 'config', 'agent-presets'), trust: 'system' }]
+      const auroraPresets = join(home, 'presets')
+      if (existsSync(auroraPresets)) roots.push({ path: auroraPresets, trust: 'user' })
       overlays.push({
         id: 'agent-presets',
         config: {
           ...(rows.get('agent-presets')?.config ?? {}),
-          roots: [{ path: join(DSH_DIR(), 'config', 'agent-presets'), trust: 'system' }],
+          // 默认预设：新会话按会话 header/meta 的 agentPreset 组合；
+          // 未指定的落回 standard（否则会话不挂任何预设工具）
+          default: 'standard',
+          roots,
         },
       })
     }

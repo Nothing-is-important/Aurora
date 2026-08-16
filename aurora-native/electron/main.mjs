@@ -13,7 +13,7 @@ import {
 import { randomUUID } from 'node:crypto'
 import { mkdirSync, readFileSync, writeFileSync, existsSync, rmSync, renameSync, appendFileSync } from 'node:fs'
 import { spawn } from 'node:child_process'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { join } from 'node:path'
 import { bootEngine, disposeEngine, runtimeDir } from './engine.mjs'
 import { KnowledgeBase, registerKbTool } from './kb.mjs'
@@ -110,8 +110,8 @@ function extractZip(zip, target) {
 async function ensureRuntime(version) {
   const dir = runtimeDir()
   if (runtimeValid(dir, version)) return true
-  // 版本标记不匹配但内容完好：两应用共享同一运行时目录（同内容 zip），
-  // 直接更新标记复用，不做破坏性重解压（目录可能被另一实例占用）。
+  // 版本标记不匹配但内容完好：直接更新标记复用，不做破坏性重解压
+  // （目录可能被占用）。
   if (runtimeSentinelsOk(dir)) {
     try {
       writeFileSync(join(dir, '.version'), version, 'utf8')
@@ -144,6 +144,92 @@ async function ensureRuntime(version) {
 /** 知识库工具注入：在每次 agent 创建/恢复的 setup 里注册进该 agent 作用域 */
 function kbSetup(agentCtx) {
   if (kb) registerKbTool(agentCtx, kb)
+}
+
+// ---------- 模式与 Anchored 解锁（社区补丁思路 + Windows 适配） ----------
+// 解锁工具集：能独立挂载到 agent 作用域的标准工具包。
+// （fs/bash/pwsh/jobs/skills 等依赖隔离 realm 服务，无法事后直挂——
+//   引导阶段已有 bash/pwsh/str_replace 覆盖读写，这里补检索/目标/技能。）
+const ANCHORED_UNLOCK_PACKAGES = ['dsh-tool-fs-search', 'dsh-tool-goal', 'dsh-tool-skill']
+
+async function importRuntimePkg(rel) {
+  return import(pathToFileURL(join(runtimeDir(), 'node_modules', '@deepseek-ai', ...rel.split('/'))).href)
+}
+
+/** 解锁：把可独立挂载的标准工具包挂入 agent 作用域 + Aurora 工具（kb_search） */
+async function unlockAnchoredTools(agentCtx) {
+  const mounted = []
+  for (const pkg of ANCHORED_UNLOCK_PACKAGES) {
+    try {
+      const mod = await importRuntimePkg(`${pkg}/lib/index.js`)
+      if (typeof mod?.apply !== 'function') continue
+      mod.apply(agentCtx, {})
+      mounted.push(pkg)
+    } catch (err) {
+      console.warn(`[anchored] mount ${pkg} failed: ${err.message}`)
+    }
+  }
+  if (kb) registerKbTool(agentCtx, kb)
+  mounted.push('kb_search')
+  return mounted
+}
+
+/**
+ * 会话 setup：按模式组合 agent 世界。
+ * 先挂载官方预设组合（standard/minimal/anchored）——引擎的预设组合由消费方
+ * 通过 agentPresets.mount() 完成（工厂不会自动组合）；anchored 额外挂解锁钩子。
+ * @returns { commit?: () => void; unlock?: () => Promise<string[]> }
+ */
+async function modeSetup(agentCtx, mode) {
+  const presetId = mode === 'anchored' ? 'anchored' : mode === 'minimal' ? 'minimal' : 'standard'
+  // 服务访问需先 inject；挂载目标仍是 agent 自身作用域
+  try {
+    await new Promise((resolve, reject) => {
+      agentCtx.inject(['agentPresets'], (inj) => {
+        inj.agentPresets
+          .mount(agentCtx, presetId)
+          .then(resolve, reject)
+        return () => {}
+      })
+    })
+  } catch (err) {
+    console.warn(`[mode] preset ${presetId} mount failed: ${err.message}`)
+  }
+  if (mode === 'anchored') {
+    let unlocked = false
+    let off = null
+    off = agentCtx.on('session/event', (_session, ev) => {
+      if (unlocked) return
+      if (ev.type === 'tool/result' || ev.type === 'assistant/message') {
+        unlocked = true
+        off?.()
+        void unlockAnchoredTools(agentCtx).then((m) => console.log('[anchored] unlocked:', m.join(', ')))
+      }
+    })
+    return {
+      // 工厂要求 setup 返回 AgentSetupCommit（{ commit }）——此处为空提交
+      commit: () => {},
+      unlock: () => {
+        if (unlocked) return Promise.resolve([])
+        unlocked = true
+        off?.()
+        return unlockAnchoredTools(agentCtx)
+      },
+    }
+  }
+  kbSetup(agentCtx)
+  return { commit: () => {} }
+}
+
+/** 解析某会话应使用的模式（resume 时从持久化 header 读取） */
+async function modeOfSession(sessionId) {
+  try {
+    const headers = await engine().sessionQuery.listSessions()
+    const h = headers.find((x) => x.id === sessionId)
+    return h?.agentPreset === 'anchored' ? 'anchored' : h?.agentPreset === 'minimal' ? 'minimal' : 'standard'
+  } catch {
+    return 'standard'
+  }
 }
 
 function mintSessionId() {
@@ -198,27 +284,35 @@ async function openSession(sessionId) {
   const c = engine()
   let session = c.sessions.get(sessionId)
   if (!session) {
-    const handle = await c.agents.resume({ resumeSessionId: sessionId, setup: kbSetup })
+    const mode = await modeOfSession(sessionId)
+    const handle = await c.agents.resume({
+      resumeSessionId: sessionId,
+      setup: (ac) => modeSetup(ac, mode),
+    })
     session = handle.agent.session
   }
   return { events: session.events, live: !!c.agents.get(sessionId) }
 }
 
-/** 发送用户消息：无活动 agent 则创建；有则 followup */
-async function sendMessage(sessionId, text) {
+/** 发送用户消息：无活动 agent 则创建；有则 followup（mode 仅新建时生效） */
+async function sendMessage(sessionId, text, mode = 'standard') {
   const c = engine()
   let agent = c.agents.get(sessionId)
   if (!agent) {
     // 会话已持久化但无活动 agent → resume；否则全新创建
     let session = c.sessions.get(sessionId)
     if (session) {
-      const handle = await c.agents.resume({ resumeSessionId: sessionId, setup: kbSetup })
+      const resumeMode = await modeOfSession(sessionId)
+      const handle = await c.agents.resume({
+        resumeSessionId: sessionId,
+        setup: (ac) => modeSetup(ac, resumeMode),
+      })
       agent = handle.agent
     } else {
       const handle = await c.agents.create({
         sessionId,
-        meta: { cwd: app.getPath('documents') },
-        setup: kbSetup,
+        meta: { cwd: app.getPath('documents'), agentPreset: mode },
+        setup: (ac) => modeSetup(ac, mode),
       })
       agent = handle.agent
     }
@@ -273,7 +367,7 @@ async function ensurePanelAgent() {
   }
   const handle = await c.agents.create({
     sessionId: `aurora-panel-${randomUUID()}`,
-    meta: { cwd: app.getPath('documents') },
+    meta: { cwd: app.getPath('documents'), agentPreset: 'standard' },
     setup: kbSetup,
   })
   panelAgentHandle = handle
@@ -287,11 +381,13 @@ async function forkChat(sessionId, boundarySeq, text) {
   if (!source) throw new Error('source session not live')
   const seed = boundarySeq >= 0 ? source.events.slice(0, boundarySeq + 1) : []
   const childId = `aurora-${randomUUID()}`
+  // 分叉继承父会话模式
+  const mode = source.header?.agentPreset === 'anchored' ? 'anchored' : source.header?.agentPreset === 'minimal' ? 'minimal' : 'standard'
   const handle = await c.agents.create({
     sessionId: childId,
     seed,
-    meta: { cwd: app.getPath('documents'), parentSession: sessionId },
-    setup: kbSetup,
+    meta: { cwd: app.getPath('documents'), parentSession: sessionId, agentPreset: mode },
+    setup: (ac) => modeSetup(ac, mode),
   })
   handle.agent.followup({ role: 'user', content: text })
   return { sessionId: childId }
@@ -462,7 +558,7 @@ let sessionEventsOff = null
 function registerBridge() {
   ipcMain.handle('sessions:list', () => listSessions())
   ipcMain.handle('sessions:open', (_e, sessionId) => openSession(sessionId))
-  ipcMain.handle('chat:send', (_e, sessionId, text) => sendMessage(sessionId, text))
+  ipcMain.handle('chat:send', (_e, sessionId, text, mode) => sendMessage(sessionId, text, mode ?? 'standard'))
   ipcMain.on('chat:stop', (_e, sessionId) => stopAgent(sessionId))
   ipcMain.handle('chat:fork', (_e, sessionId, boundarySeq, text) => forkChat(sessionId, boundarySeq, text))
   ipcMain.handle('llm:state', () => llmState())
@@ -749,6 +845,7 @@ app.whenReady().then(async () => {
     kb = new KnowledgeBase(join(app.getPath('userData'), 'kb'))
     createTray()
     console.log('[aurora-native] engine booted', bootUrl ? `(web at ${bootUrl})` : '(headless)', 'home =', dshHome)
+    // 先注册桥再建窗口：渲染层启动即调 llm:state 等，处理器必须已就位
     registerBridge()
     createWindow()
     globalShortcut.register('CommandOrControl+Shift+A', () => {
@@ -961,6 +1058,50 @@ async function runSmoke() {
     }
     ok('versionReported', typeof app.getVersion() === 'string' && app.getVersion().length > 0, app.getVersion())
 
+    // Anchored 模式：极简引导 → 解锁全量标准工具（社区补丁思路）
+    const anchoredId = `aurora-anchored-${randomUUID()}`
+    let anchoredUnlock = null
+    const anchoredHandle = await engine().agents.create({
+      sessionId: anchoredId,
+      meta: { cwd: app.getPath('documents'), agentPreset: 'anchored' },
+      setup: async (ac) => {
+        const r = await modeSetup(ac, 'anchored')
+        anchoredUnlock = r.unlock ?? null
+        return r
+      },
+    })
+    const bootSchemas = engine().tools.schemas(anchoredHandle.agent).map((s) => s.name)
+    ok(
+      'anchoredBootstrapMinimal',
+      bootSchemas.includes('str_replace_editor') && !bootSchemas.includes('write') && !bootSchemas.includes('edit'),
+      bootSchemas,
+    )
+    const mounted = await anchoredUnlock()
+    const afterSchemas = engine().tools.schemas(anchoredHandle.agent).map((s) => s.name)
+    ok(
+      'anchoredUnlockStandard',
+      afterSchemas.includes('get_goal') && afterSchemas.includes('skill') && afterSchemas.includes('kb_search') && mounted.length >= 2,
+      { mounted, names: afterSchemas },
+    )
+    await anchoredHandle.dispose()
+
+    // 标准模式回归：标准预设会话自带文件工具
+    const stdId = `aurora-std-${randomUUID()}`
+    const stdHandle = await engine().agents.create({
+      sessionId: stdId,
+      meta: { cwd: app.getPath('documents'), agentPreset: 'standard' },
+      setup: async (ac) => modeSetup(ac, 'standard'),
+    })
+    const stdSchemas = engine().tools.schemas(stdHandle.agent).map((s) => s.name)
+    ok('standardPresetHasFsTools', stdSchemas.includes('write'), stdSchemas)
+    await stdHandle.dispose()
+
+    // 模式参数贯通：chat:send 携带 mode → 会话 header.agentPreset
+    const modeSid = mintSessionId()
+    await sendMessage(modeSid, '模式冒烟', 'anchored')
+    const modeHeader = engine().sessions.get(modeSid)?.header
+    ok('modePassesThroughSend', modeHeader?.agentPreset === 'anchored', modeHeader)
+
     // 渲染层加载
     await sleep(3000)
     ok('windowLoaded', win && win.webContents.getURL().length > 0, win?.webContents.getURL())
@@ -1022,8 +1163,23 @@ async function runSmoke() {
         // 模型菜单过滤：无密钥时应显示空态提示
         document.querySelector('[data-model-pill]')?.click()
         await new Promise((r) => setTimeout(r, 300))
-        const menuText = (document.querySelector('.relative')?.textContent || '')
-        out.menuEmptyHint = menuText.includes('暂无已配置密钥')
+        out.pillFound = !!document.querySelector('[data-model-pill]')
+        out.modelMenuText = document.querySelector('[data-model-menu]')?.textContent ?? null
+        out.menuEmptyHint = (out.modelMenuText || '').includes('暂无已配置密钥')
+        document.querySelector('[data-model-pill]')?.click()
+        await new Promise((r) => setTimeout(r, 200))
+        // 模式胶囊：存在 + 可切换 Anchored（localStorage 持久化）
+        document.querySelector('[data-mode-pill]')?.click()
+        await new Promise((r) => setTimeout(r, 300))
+        const modeOptions = document.querySelectorAll('[data-mode-option]').length
+        Array.from(document.querySelectorAll('[data-mode-option]')).find((b) =>
+          (b.textContent || '').includes('Anchored'),
+        )?.click()
+        await new Promise((r) => setTimeout(r, 300))
+        out.modePill = !!document.querySelector('[data-mode-pill]')
+        out.modeOptions = modeOptions
+        out.modePersisted = (localStorage.getItem('aurora-mode') || '') === 'anchored'
+        out.modePillLabel = document.querySelector('[data-mode-pill]')?.textContent || ''
         return out
       })()`)
       .catch((e) => ({ error: String(e) }))
@@ -1053,6 +1209,11 @@ async function runSmoke() {
       { before: uiFlow.chipsBefore, after: uiFlow.chipsAfter, restored: uiFlow.chipsRestored },
     )
     ok('dshHomeSectionFirst', uiFlow.dshHomeBeforeProviders === true, { dshHomeBeforeProviders: uiFlow.dshHomeBeforeProviders })
+    ok(
+      'modePillWorks',
+      uiFlow.modePill === true && uiFlow.modeOptions >= 3 && uiFlow.modePersisted === true && /Anchored/.test(uiFlow.modePillLabel ?? ''),
+      { modeOptions: uiFlow.modeOptions, persisted: uiFlow.modePersisted, label: uiFlow.modePillLabel },
+    )
 
     // 命令面板 / 模板 / 编辑模式 UI 流
     const uiFlow2 = await win.webContents

@@ -1,0 +1,3 @@
+name: Anchored 模式（实验）
+description: 社区补丁思路：极简工具开局（bash/str_replace/PowerShell），首次工具调用或回复后自动解锁全部标准工具。
+order: 5

@@ -19,10 +19,15 @@ export default function App() {
     return saved === 'light' ? 'light' : 'dark'
   })
   const [version, setVersion] = useState('')
+  const [mode, setMode] = useState<string>(() => localStorage.getItem('aurora-mode') ?? 'standard')
 
   useEffect(() => {
     void window.aurora.app.version().then(setVersion)
   }, [])
+
+  useEffect(() => {
+    localStorage.setItem('aurora-mode', mode)
+  }, [mode])
 
   useEffect(() => {
     document.documentElement.classList.toggle('dark', theme === 'dark')
@@ -90,9 +95,11 @@ export default function App() {
           streaming={chat.streaming}
           ready={chat.ready}
           llm={llm}
+          mode={mode}
+          onModeChange={setMode}
           onLlmSelect={handleLlmSelect}
           onOpenSettings={() => setSettingsOpen(true)}
-          onSend={(t) => void chat.send(t)}
+          onSend={(t, m) => void chat.send(t, m)}
           onStop={chat.stop}
           onFork={chat.fork}
         />

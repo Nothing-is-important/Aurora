@@ -179,7 +179,7 @@ export function useChat(): UseChatResult {
   }, [])
 
   const send = useCallback(
-    async (text: string) => {
+    async (text: string, mode = 'standard') => {
       const trimmed = text.trim()
       if (!trimmed) return
       let sid = sessionRef.current
@@ -190,7 +190,7 @@ export function useChat(): UseChatResult {
       }
       setStreaming(true)
       try {
-        await window.aurora.chat.send(sid, trimmed)
+        await window.aurora.chat.send(sid, trimmed, mode)
       } catch (err) {
         console.error('chat:send failed', err)
         setStreaming(false)

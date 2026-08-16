@@ -3,6 +3,10 @@
 > 结论先行：**可行，PoC 已跑通**。Aurora 以「原生本地客户端」形态包裹 `dsh web`，
 > 官方 Web 界面完整渲染在 Electron 无边框窗口中（见 `dsh-shell/poc-screenshot.png`
 > 与 `dsh-shell/main.mjs`）。本报告给出架构依据、两种嵌入路线的取舍、风险清单与落地路线图。
+>
+> 📌 **历史注记（v1.0.2）**：Route 1 的壳客户端形态（`dsh-shell/`）已于 v1.0.2 删除——
+> 正式路线改为 Route X「引擎进程内嵌入 + 自绘 Aurora UI」（`aurora-native/`），本报告仅作
+> 架构取舍的历史记录保留。
 
 ---
 

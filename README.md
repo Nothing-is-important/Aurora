@@ -15,15 +15,14 @@
 
 ---
 
-## 📦 三个形态
+## 📦 两个形态
 
 | 形态 | 目录 | 说明 |
 | --- | --- | --- |
 | **Aurora 原生客户端**（主力） | `aurora-native/` | 进程内嵌入 Harness 引擎 + 自绘 Aurora UI，单进程、开箱即用 |
-| **Aurora DSH 壳客户端**（保底） | `dsh-shell/` | 原生窗口/托盘/快捷键包裹官方 `dsh web` 界面，100% 官方功能 |
 | **Aurora 独立应用**（经典） | 仓库根目录 | 早期独立实现的 Aurora（自制引擎 + 提供商预设），保留在 `main` 分支 |
 
-两个新客户端都**自带 dsh 运行时**（首个安装包内是单文件 zip，首启自动解压到 `%LOCALAPPDATA%\Aurora DSH\runtime`，两应用共享、损坏自愈），无需自行安装 Node 或 dsh。
+原生客户端**自带 dsh 运行时**（首个安装包内是单文件 zip，首启自动解压到 `%LOCALAPPDATA%\Aurora DSH\runtime`，损坏自愈），无需自行安装 Node 或 dsh。
 
 ---
 
@@ -42,6 +41,7 @@
 - **模型供应商制**：DeepSeek 官方 + 任意可配置供应商；配置 API Key → **测速并获取模型列表**（名称/上下文窗口/输出上限）；左上角模型菜单只显示已配置密钥的供应商
 - 会话管理：引擎持久化（SQLite 查询 + JSONL 日志）、历史会话列表、自动标题
 - **提示词模板库**（23 个）：翻译/润色/会议纪要/周报/需求拆解…一键插入
+- **模式胶囊**：标准 / 极简 / **Anchored**——极简工具开局（bash + PowerShell + 编辑器），首次工具调用或回复后自动解锁检索、目标与技能等全量工具（社区补丁思路，可选实验）
 - **DSH 数据目录可切换**：指向已有部署（如 `F:\.dsh`）直接复用其 API Key 与会话
 
 ### 🤖 引擎能力（DeepSeek Harness 直连）
@@ -67,7 +67,6 @@
 从 [Releases](../../releases) 下载最新版安装包（Windows x64，NSIS）：
 
 - `Aurora-Setup-1.0.0.exe` —— **Aurora 原生客户端**（推荐）
-- `Aurora-DSH-Setup-1.0.0.exe` —— Aurora DSH 壳客户端（官方界面）
 
 双击安装即可，**无需安装 Node / dsh**（运行时内置）。
 
@@ -90,23 +89,18 @@ npm install            # 中国网络可设 ELECTRON_MIRROR=https://npmmirror.co
 npm run build          # 构建渲染层
 node scripts/pack-runtime.mjs   # 打包内置运行时（先下载便携 node 到 .node-portable.zip）
 npm run smoke          # 冒烟审计
-
-# Aurora DSH 壳客户端
-cd ../dsh-shell
-node smoke.mjs         # 双场景冒烟审计
 ```
 
 ## 🧪 工程质量
 
-- **全自动冒烟审计**（两应用合计 40+ 断言）：引擎启动/会话生命周期/模型目录/凭据往返/密钥过滤/单次点击切换/命令面板/模板填充/分叉通路/动态插件全流程/MCP 重启/知识库检索/窗口状态/托盘/截图存证——每轮迭代构建 + 审计 + 修复闭环
+- **全自动冒烟审计**（40+ 断言）：引擎启动/会话生命周期/模型目录/凭据往返/密钥过滤/单次点击切换/命令面板/模板填充/分叉通路/动态插件全流程/MCP 重启/知识库检索/Anchored 模式解锁/窗口状态/托盘/截图存证——每轮迭代构建 + 审计 + 修复闭环
 - 打包态（win-unpacked）冒烟 + 静默安装计时测试
-- 运行时哨兵校验自愈、共享运行时跨应用复用、图标字节级验证
+- 运行时哨兵校验自愈、图标字节级验证
 
 ## 📁 项目结构
 
 ```
-aurora-native/   Aurora 原生客户端（electron/ 引擎桥 + src/ 自绘 UI + kb/BM25）
-dsh-shell/       Aurora DSH 壳客户端（dsh 生命周期/托盘/崩溃自愈 + 官方 Web UI）
+aurora-native/   Aurora 原生客户端（electron/ 引擎桥 + presets/ 内置预设 + src/ 自绘 UI + kb/BM25）
 electron/ src/   经典独立应用（main 分支，v0.9 系列）
 docs/            需求、变更日志、使用教程、DSH 嵌入可行性报告、截图
 scripts/         构建与测试脚本

@@ -1,0 +1,69 @@
+# Aurora `anchored` 预设（社区补丁思路 + Windows 适配）
+#
+# 两阶段：
+#  - 引导（Phase A）：只挂持久 bash + str_replace_editor + PowerShell（Windows 适配），
+#    提示词要求「先给出计划与思考，再最小限度使用工具」。
+#  - 解锁（Phase B）：引擎事件流中首次 tool/result 或 assistant/message 后，
+#    Aurora 主进程把标准工具集（fs/bash/pwsh/jobs/goal/plan/skill…）挂入该会话。
+#
+# 本文件只负责 Phase A 的静态组合；Phase B 由 aurora-native 的 modeSetup 实现。
+
+- id: persona
+  name: '@deepseek-ai/dsh-persona'
+  config:
+    text: |-
+      You are a helpful software engineer assistant.
+      Phase A (current): only bash, PowerShell and the str_replace_editor are available.
+      First think carefully and present a concise plan; use tools sparingly.
+      After your first tool call or your first reply, the full tool set unlocks —
+      you will then have file reading/writing, searching, jobs, goals, planning and skills.
+    complete: false
+    includeRuntimeContext: true
+
+# 持久 shell（bash）—— 与官方极简预设一致
+- id: persistent-shell
+  name: cordis:group
+  group: true
+  isolate:
+    terminals: true
+  config:
+    - id: pty
+      name: '@deepseek-ai/dsh-terminal'
+
+    - id: terminal-bash
+      name: '@deepseek-ai/dsh-terminal-bash'
+      config:
+        timeoutMs: 300000
+
+    - id: persistent-bash
+      name: '@deepseek-ai/dsh-tool-bash-persistent'
+      config:
+        timeoutMs: 300000
+        description: |-
+          Run commands in a bash shell
+          * When invoking this tool, the contents of the "command" parameter does NOT need to be XML-escaped.
+          * You don't have access to the internet via this tool.
+          * You do have access to a mirror of common linux and python packages via apt and pip.
+          * State is persistent across command calls and discussions with the user.
+          * To inspect a particular line range of a file, e.g. lines 10-25, try 'sed -n 10,25p /path/to/the/file'.
+          * Please avoid commands that may produce a very large amount of output.
+          * Please run long lived commands in the background, e.g. 'sleep 10 &' or start a server in the background.
+
+# Windows 适配：PowerShell 工具（极简预设没有，Windows 上工具调用受限的社区痛点）
+- id: tool-pwsh
+  name: '@deepseek-ai/dsh-tool-pwsh'
+
+# 极简的本地文件系统 + 行级编辑器
+- id: filesystem
+  name: cordis:group
+  group: true
+  isolate:
+    fs: true
+  config:
+    - id: fs-local
+      name: '@deepseek-ai/dsh-fs-local'
+      config:
+        cwd: !!js process.env.DSH_CWD ?? process.cwd()
+
+    - id: str-replace-editor
+      name: '@deepseek-ai/dsh-tool-str-replace-editor'

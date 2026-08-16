@@ -7,7 +7,7 @@ contextBridge.exposeInMainWorld('aurora', {
     open: (sessionId) => ipcRenderer.invoke('sessions:open', sessionId),
   },
   chat: {
-    send: (sessionId, text) => ipcRenderer.invoke('chat:send', sessionId, text),
+    send: (sessionId, text, mode) => ipcRenderer.invoke('chat:send', sessionId, text, mode),
     stop: (sessionId) => ipcRenderer.send('chat:stop', sessionId),
     fork: (sessionId, boundarySeq, text) => ipcRenderer.invoke('chat:fork', sessionId, boundarySeq, text),
     onEvent: (cb) => {

@@ -1,5 +1,16 @@
 # Aurora 变更日志
 
+## v1.0.2 · Anchored 模式 + 删除壳客户端 ✅（完成）
+
+### Aurora 原生客户端（aurora-native）
+- **Anchored 模式**（可选实验，社区「极简→解锁」补丁思路的 Windows 适配）：新会话以极简工具开局（持久 bash + PowerShell + `str_replace_editor`，persona 引导两步走），首次工具调用或助手回复后**自动解锁**检索/目标/技能等全量工具（含 Aurora `kb_search`）；模式胶囊切换并持久化，会话 resume 时按持久化 header 恢复原模式
+- 内置 Aurora 预设（`presets/anchored`）随应用分发，首启拷贝到 DSH_HOME/presets（Aurora 自带预设总是覆盖、用户自建预设不受影响）；`agent-presets` 增加 `default: standard` 兜底
+- 修复冒烟脚本模型菜单断言：胶囊被连点两次（开→关）导致菜单文本恒为 null——改为单击后断言
+- 主进程启动顺序明确：引擎 boot → 托盘 → **先注册 IPC 桥** → 建窗（渲染层启动即调 `llm:state`，处理器必须已就位）
+
+### 其它
+- **删除 dsh-shell 壳客户端**（官方 Web UI 包裹形态）：aurora-native 原生形态已完全覆盖其场景，README 改为「两个形态」，安装/结构/工程质量文档同步更新
+
 ## 增值轮 · 托盘常驻与系统通知 ✅（完成）
 
 - **系统托盘**：启动即常驻（图标随安装包分发），点击切换显示/隐藏，右键菜单（显示 / 最小化到托盘 / 退出）

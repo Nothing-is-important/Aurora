@@ -232,12 +232,20 @@ interface Props {
   streaming: boolean
   ready: boolean
   llm: LlmState | null
+  mode: string
+  onModeChange: (mode: string) => void
   onLlmSelect: (provider: string, model: string) => Promise<void>
   onOpenSettings: () => void
-  onSend: (text: string) => void
+  onSend: (text: string, mode: string) => void
   onStop: () => void
   onFork: (boundarySeq: number, text: string) => Promise<void>
 }
+
+const MODE_OPTIONS = [
+  { id: 'standard', label: '标准模式' },
+  { id: 'minimal', label: '极简模式' },
+  { id: 'anchored', label: 'Anchored 模式（实验）' },
+]
 
 export default function ChatArea({
   messages,
@@ -245,6 +253,8 @@ export default function ChatArea({
   streaming,
   ready,
   llm,
+  mode,
+  onModeChange,
   onLlmSelect,
   onOpenSettings,
   onSend,
@@ -253,6 +263,7 @@ export default function ChatArea({
 }: Props) {
   const [input, setInput] = useState('')
   const [menuOpen, setMenuOpen] = useState(false)
+  const [modeMenuOpen, setModeMenuOpen] = useState(false)
   const [exportOpen, setExportOpen] = useState(false)
   const [tplOpen, setTplOpen] = useState(false)
   const [editMode, setEditMode] = useState<{ seq: number; text: string } | null>(null)
@@ -260,6 +271,7 @@ export default function ChatArea({
   const menuRef = useRef<HTMLDivElement>(null)
   const exportRef = useRef<HTMLDivElement>(null)
   const tplRef = useRef<HTMLDivElement>(null)
+  const modeMenuRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
@@ -270,6 +282,7 @@ export default function ChatArea({
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false)
       if (exportRef.current && !exportRef.current.contains(e.target as Node)) setExportOpen(false)
       if (tplRef.current && !tplRef.current.contains(e.target as Node)) setTplOpen(false)
+      if (modeMenuRef.current && !modeMenuRef.current.contains(e.target as Node)) setModeMenuOpen(false)
     }
     window.addEventListener('mousedown', onClick)
     return () => window.removeEventListener('mousedown', onClick)
@@ -282,7 +295,7 @@ export default function ChatArea({
       void onFork(editMode.seq - 1, t)
       setEditMode(null)
     } else {
-      onSend(t)
+      onSend(t, mode)
     }
     setInput('')
   }
@@ -320,9 +333,47 @@ export default function ChatArea({
 
   return (
     <main className="flex min-w-0 flex-1 flex-col">
-      {/* 顶部工具行：模型选择 + 导出 + 设置 */}
+      {/* 顶部工具行：模式 + 模型选择 + 导出 + 设置 */}
       <div className="flex shrink-0 items-center justify-between px-6 pb-1 pt-2">
-        <div className="relative" ref={menuRef}>
+        <div className="flex items-center gap-2">
+          <div className="relative" ref={modeMenuRef}>
+            <button
+              data-mode-pill
+              title="切换模式（仅对新会话生效）"
+              onClick={() => setModeMenuOpen((v) => !v)}
+              className="flex items-center gap-1.5 rounded-full bg-black/[0.05] px-3 py-1.5 text-[12px] font-medium text-black/70 transition-colors hover:bg-black/[0.09] dark:bg-white/[0.07] dark:text-white/70 dark:hover:bg-white/[0.12]"
+            >
+              <Sparkles size={12} strokeWidth={2.2} className="text-apple-purple" />
+              {MODE_OPTIONS.find((m) => m.id === mode)?.label ?? '标准模式'}
+              <ChevronDown size={12} className={`transition-transform ${modeMenuOpen ? 'rotate-180' : ''}`} />
+            </button>
+            {modeMenuOpen && (
+              <div className="absolute left-0 top-9 z-30 w-52 overflow-hidden rounded-xl border border-black/[0.08] bg-white/95 p-1 shadow-glass backdrop-blur-2xl dark:border-white/[0.1] dark:bg-[#1c1c23]/95">
+                {MODE_OPTIONS.map((m) => (
+                  <button
+                    key={m.id}
+                    data-mode-option
+                    onClick={() => {
+                      setModeMenuOpen(false)
+                      onModeChange(m.id)
+                    }}
+                    className={`flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-left text-[12px] transition-colors ${
+                      mode === m.id
+                        ? 'bg-apple-purple/12 font-medium text-apple-purple dark:bg-apple-purple/20'
+                        : 'text-black/70 hover:bg-black/[0.05] dark:text-white/70 dark:hover:bg-white/[0.06]'
+                    }`}
+                  >
+                    {m.label}
+                    {mode === m.id && <Check size={12} />}
+                  </button>
+                ))}
+                <p className="border-t border-black/[0.05] px-2.5 py-1.5 text-[10px] leading-relaxed text-black/35 dark:border-white/[0.07] dark:text-white/35">
+                  Anchored：极简工具开局，首次工具调用/回复后自动解锁全量工具（社区补丁思路）。
+                </p>
+              </div>
+            )}
+          </div>
+          <div className="relative" ref={menuRef}>
           <button
             data-model-pill
             title="切换模型"
@@ -334,7 +385,7 @@ export default function ChatArea({
             <ChevronDown size={12} className={`transition-transform ${menuOpen ? 'rotate-180' : ''}`} />
           </button>
           {menuOpen && llm && (
-            <div className="absolute left-0 top-9 z-30 max-h-72 w-64 overflow-y-auto rounded-xl border border-black/[0.08] bg-white/95 p-1.5 shadow-glass backdrop-blur-2xl dark:border-white/[0.1] dark:bg-[#1c1c23]/95">
+            <div data-model-menu className="absolute left-0 top-9 z-30 max-h-72 w-64 overflow-y-auto rounded-xl border border-black/[0.08] bg-white/95 p-1.5 shadow-glass backdrop-blur-2xl dark:border-white/[0.1] dark:bg-[#1c1c23]/95">
               {llm.providers.filter((p) => p.hasKey && p.models.length > 0).length === 0 ? (
                 <p className="px-2 py-3 text-center text-[11.5px] leading-relaxed text-black/40 dark:text-white/40">
                   暂无已配置密钥的提供商。
@@ -375,6 +426,7 @@ export default function ChatArea({
               )}
             </div>
           )}
+        </div>
         </div>
         <div className="flex items-center gap-1">
           <div className="relative" ref={exportRef}>

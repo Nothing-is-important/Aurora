@@ -58,7 +58,7 @@ declare global {
         open: (sessionId: string) => Promise<{ events: SessionEventPayload[]; live: boolean }>
       }
       chat: {
-        send: (sessionId: string, text: string) => Promise<{ sessionId: string }>
+        send: (sessionId: string, text: string, mode?: string) => Promise<{ sessionId: string }>
         stop: (sessionId: string) => void
         fork: (
           sessionId: string,
