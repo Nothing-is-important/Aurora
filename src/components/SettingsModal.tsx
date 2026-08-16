@@ -611,9 +611,6 @@ return { meta, setup }
                       >
                         未保存
                       </span>
-                      <span className="truncate text-black/35 dark:text-white/35">
-                        {form.baseUrl || '待配置'}
-                      </span>
                     </span>
                   </span>
                   {draftProvider.id === selectedProviderId && (
