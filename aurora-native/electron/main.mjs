@@ -232,6 +232,36 @@ function stopAgent(sessionId) {
   if (agent) agent.cancel({ kind: 'user' })
 }
 
+/** 删除模型：settings 命名空间 set 替换 models 路径，立即生效；当前选择自动回落 */
+async function removeModel(providerId, modelId) {
+  const c = engine()
+  const entry = (c.llm.listConfigurableProviders?.() ?? []).find((p) => p.provider === providerId)
+  if (!entry) throw new Error(`provider ${providerId} not found`)
+  const desc = c.settings.describe().find((x) => x.ns === entry.settingsNs)
+  const cur = Array.isArray(desc?.value?.models) ? desc.value.models : []
+  const next = cur.filter((m) => m.id !== modelId)
+  if (next.length === 0) throw new Error('至少保留一个模型')
+  await c.settings.mutate(entry.settingsNs, [{ op: 'set', path: ['models'], value: next }])
+  try {
+    const sel = c.agentDefaultModel.currentSelection()
+    if (sel?.provider === providerId && sel?.model === modelId && next.length > 0) {
+      await c.agentDefaultModel.saveSelection({ provider: providerId, model: next[0].id })
+    }
+  } catch {
+    /* 选择回落失败不影响删除 */
+  }
+  return llmState()
+}
+
+/** 恢复默认模型列表：unset 用户覆盖的 models 路径 */
+async function restoreModels(providerId) {
+  const c = engine()
+  const entry = (c.llm.listConfigurableProviders?.() ?? []).find((p) => p.provider === providerId)
+  if (!entry) throw new Error(`provider ${providerId} not found`)
+  await c.settings.mutate(entry.settingsNs, [{ op: 'unset', path: ['models'] }])
+  return llmState()
+}
+
 /** 面板操作代理：优先复用根 agent；无则惰性创建（重启后缓存自动失效） */
 async function ensurePanelAgent() {
   if (panelAgentHandle) return panelAgentHandle
@@ -325,12 +355,14 @@ async function llmState() {
   for (const p of configured) {
     let apiKeyEnv = null
     let hasKey = false
+    let modelsOverridden = false
     try {
       const desc = c.settings.describe({ redactSecrets: true }).find((x) => x.ns === p.settingsNs)
       apiKeyEnv = typeof desc?.value?.apiKeyEnv === 'string' ? desc.value.apiKeyEnv : null
       if (apiKeyEnv) {
         hasKey = (await c.credentials.resolve(apiKeyEnv)) !== undefined
       }
+      modelsOverridden = desc?.user?.models !== undefined
     } catch {
       /* 命名空间缺失 */
     }
@@ -353,7 +385,7 @@ async function llmState() {
     } catch {
       /* 无目录 */
     }
-    providers.push({ ...p, live: live.has(p.id), apiKeyEnv, hasKey, models })
+    providers.push({ ...p, live: live.has(p.id), apiKeyEnv, hasKey, models, modelsOverridden })
   }
   return { providers, current }
 }
@@ -441,6 +473,8 @@ function registerBridge() {
     return llmState()
   })
   ipcMain.handle('llm:discover', (_e, providerId) => llmDiscover(providerId))
+  ipcMain.handle('llm:removeModel', (_e, providerId, modelId) => removeModel(providerId, modelId))
+  ipcMain.handle('llm:restoreModels', (_e, providerId) => restoreModels(providerId))
   ipcMain.handle('credentials:has', async (_e, ref) => {
     const hit = await engine().credentials.resolve(ref)
     return hit !== undefined
@@ -804,6 +838,26 @@ async function runSmoke() {
       ok('llmSelectionSaved', cur.provider === first.id && cur.model === first.models[0].id, cur)
     }
 
+    // 模型删除/恢复（引擎 settings 命名空间 set/unset，删除立即生效 + 选择回落）
+    const prov2 = (await llmState()).providers.find((p) => p.models.length >= 2)
+    if (prov2) {
+      await engine().agentDefaultModel.saveSelection({ provider: prov2.id, model: prov2.models[1].id })
+      const afterRemove = await removeModel(prov2.id, prov2.models[1].id)
+      const removedOk =
+        afterRemove.providers.find((p) => p.id === prov2.id)?.models.length === prov2.models.length - 1 &&
+        afterRemove.current.model === prov2.models[0].id
+      ok('llmRemoveModelWorks', removedOk, {
+        modelsAfter: afterRemove.providers.find((p) => p.id === prov2.id)?.models.map((m) => m.id),
+        current: afterRemove.current,
+      })
+      const afterRestore = await restoreModels(prov2.id)
+      ok(
+        'llmRestoreModelsWorks',
+        afterRestore.providers.find((p) => p.id === prov2.id)?.models.length === prov2.models.length,
+        afterRestore.providers.find((p) => p.id === prov2.id)?.models.map((m) => m.id),
+      )
+    }
+
     // 凭据 roundtrip（写入 .credentials.yaml → 读取存在 → 删除）
     const credRef = 'AURORA_SMOKE_KEY'
     await engine().credentials.set(credRef, 'sk-smoke')
@@ -934,8 +988,13 @@ async function runSmoke() {
         out.pluginCode = !!document.querySelector('[data-plugin-code]')
         // 单击第二个模型选项（一次点击）——回归「需要点两次」的 bug
         const chips = Array.from(document.querySelectorAll('[data-model-option]'))
+        // 数据目录应位于模型供应商之前（首要设置可见性）
+        out.dshHomeBeforeProviders =
+          !!(document.querySelector('[data-dsh-home]')?.compareDocumentPosition(
+            document.querySelector('[data-provider-card]'),
+          ) & Node.DOCUMENT_POSITION_FOLLOWING)
         if (chips.length >= 2) {
-          chips[1].click()
+          chips[1].querySelector('button')?.click()
           await new Promise((r) => setTimeout(r, 1500))
           const active = Array.from(document.querySelectorAll('[data-model-option]'))
             .filter((c) => c.className.includes('bg-apple-blue'))
@@ -944,6 +1003,17 @@ async function runSmoke() {
         } else {
           out.activeAfterOneClick = null
         }
+        // 删除模型：点击 × 后列表立即减少（无需关闭设置再打开）
+        const before = document.querySelectorAll('[data-model-option]').length
+        document.querySelector('[data-model-remove]')?.click()
+        await new Promise((r) => setTimeout(r, 1500))
+        out.chipsBefore = before
+        out.chipsAfter = document.querySelectorAll('[data-model-option]').length
+        out.restoreBtn = !!document.querySelector('[data-model-restore]')
+        // 恢复默认：列表回到删除前
+        document.querySelector('[data-model-restore]')?.click()
+        await new Promise((r) => setTimeout(r, 1500))
+        out.chipsRestored = document.querySelectorAll('[data-model-option]').length
         // 关闭（点遮罩）
         const backdrop = document.querySelector('[data-settings]')
         backdrop?.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
@@ -977,6 +1047,12 @@ async function runSmoke() {
     )
     ok('singleClickSwitchesModel', singleClickOk, uiFlow.activeAfterOneClick)
     ok('modelMenuFiltersByKey', uiFlow.menuEmptyHint === true, { menuEmptyHint: uiFlow.menuEmptyHint })
+    ok(
+      'modelDeleteRefreshesImmediately',
+      uiFlow.chipsBefore >= 2 && uiFlow.chipsAfter === uiFlow.chipsBefore - 1 && uiFlow.restoreBtn === true && uiFlow.chipsRestored === uiFlow.chipsBefore,
+      { before: uiFlow.chipsBefore, after: uiFlow.chipsAfter, restored: uiFlow.chipsRestored },
+    )
+    ok('dshHomeSectionFirst', uiFlow.dshHomeBeforeProviders === true, { dshHomeBeforeProviders: uiFlow.dshHomeBeforeProviders })
 
     // 命令面板 / 模板 / 编辑模式 UI 流
     const uiFlow2 = await win.webContents

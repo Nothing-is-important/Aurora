@@ -20,6 +20,8 @@ contextBridge.exposeInMainWorld('aurora', {
     state: () => ipcRenderer.invoke('llm:state'),
     select: (provider, model) => ipcRenderer.invoke('llm:select', provider, model),
     discover: (providerId) => ipcRenderer.invoke('llm:discover', providerId),
+    removeModel: (providerId, modelId) => ipcRenderer.invoke('llm:removeModel', providerId, modelId),
+    restoreModels: (providerId) => ipcRenderer.invoke('llm:restoreModels', providerId),
   },
   credentials: {
     has: (ref) => ipcRenderer.invoke('credentials:has', ref),

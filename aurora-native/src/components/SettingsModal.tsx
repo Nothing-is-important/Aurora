@@ -142,6 +142,27 @@ export default function SettingsModal({ open, onClose, onEngineRestarted }: Prop
     }
   }
 
+  const removeModel = async (provider: string, model: string) => {
+    setModelBusy(`${provider}::${model}`)
+    try {
+      // 引擎侧删除后立即回读状态刷新列表（此前需要关开设置才刷新）
+      setLlm(await window.aurora.llm.removeModel(provider, model))
+    } catch (err) {
+      console.error('llm:removeModel failed', err)
+    } finally {
+      setModelBusy(null)
+    }
+  }
+
+  const restoreModels = async (provider: string) => {
+    setModelBusy(provider)
+    try {
+      setLlm(await window.aurora.llm.restoreModels(provider))
+    } finally {
+      setModelBusy(null)
+    }
+  }
+
   const discover = async (p: LlmProviderInfo) => {
     setDiscovering(p.id)
     setDiscoverMsg((m) => ({ ...m, [p.id]: '' }))
@@ -265,6 +286,35 @@ export default function SettingsModal({ open, onClose, onEngineRestarted }: Prop
         </div>
 
         <div className="min-h-0 flex-1 space-y-6 overflow-y-auto px-5 py-4">
+          {/* DSH 数据目录（放最前：首要设置，避免被长列表挤到折叠区外） */}
+          <section>
+            <h3 className="mb-2 flex items-center gap-1.5 text-[12.5px] font-semibold text-black/70 dark:text-white/70">
+              <FolderOpen size={13} strokeWidth={2.2} /> DSH 数据目录
+            </h3>
+            <p className="mb-2 text-[11.5px] leading-relaxed text-black/40 dark:text-white/40">
+              会话、凭据与配置存于此目录。可指向已有部署（如 F:\.dsh）直接复用其 API Key
+              与会话；留空则使用应用自带目录。
+            </p>
+            <div className="flex items-center gap-2">
+              <input
+                data-dsh-home
+                className={field}
+                placeholder="留空 = 应用自带目录"
+                value={dshHome}
+                onChange={(e) => setDshHome(e.target.value)}
+              />
+              <button
+                data-home-apply
+                disabled={homeBusy}
+                onClick={() => void applyHome()}
+                className="h-9 shrink-0 rounded-lg bg-apple-blue px-4 text-[12.5px] font-medium text-white transition-all hover:brightness-110 active:scale-95 disabled:opacity-60"
+              >
+                {homeBusy ? <Loader2 size={13} className="animate-spin" /> : '应用'}
+              </button>
+            </div>
+            {homeMsg && <p className="mt-1.5 text-[11px] text-apple-green">{homeMsg}</p>}
+          </section>
+
           {/* 模型供应商 */}
           <section>
             <h3 className="mb-2 flex items-center gap-1.5 text-[12.5px] font-semibold text-black/70 dark:text-white/70">
@@ -372,26 +422,54 @@ export default function SettingsModal({ open, onClose, onEngineRestarted }: Prop
                               llm.current.provider === p.id && llm.current.model === m.id
                             const busySel = modelBusy === `${p.id}::${m.id}`
                             return (
-                              <button
+                              <span
                                 key={m.id}
                                 data-model-option
                                 title={m.description ?? m.id}
-                                onClick={() => void selectModel(p.id, m.id)}
-                                className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[11.5px] transition-all ${
+                                className={`group inline-flex items-center gap-1 rounded-full transition-all ${
                                   active
                                     ? 'bg-apple-blue font-medium text-white'
-                                    : 'bg-black/[0.05] text-black/60 hover:bg-black/[0.09] dark:bg-white/[0.07] dark:text-white/60 dark:hover:bg-white/[0.12]'
+                                    : 'bg-black/[0.05] text-black/60 dark:bg-white/[0.07] dark:text-white/60'
                                 }`}
                               >
-                                {busySel && <Loader2 size={11} className="animate-spin" />}
-                                {m.name}
-                                {m.contextWindow
-                                  ? ` · ${Math.round(m.contextWindow / 1024)}K 上下文`
-                                  : ''}
-                                {m.maxTokens ? ` · 上限 ${m.maxTokens}` : ''}
-                              </button>
+                                <button
+                                  onClick={() => void selectModel(p.id, m.id)}
+                                  className="flex items-center gap-1.5 rounded-full py-1.5 pl-3 pr-1.5 text-[11.5px]"
+                                >
+                                  {busySel && <Loader2 size={11} className="animate-spin" />}
+                                  {m.name}
+                                  {m.contextWindow
+                                    ? ` · ${Math.round(m.contextWindow / 1024)}K 上下文`
+                                    : ''}
+                                  {m.maxTokens ? ` · 上限 ${m.maxTokens}` : ''}
+                                </button>
+                                <button
+                                  data-model-remove
+                                  title="删除模型"
+                                  onClick={() => void removeModel(p.id, m.id)}
+                                  disabled={busySel}
+                                  className={`mr-1 flex h-4 w-4 items-center justify-center rounded-full text-[10px] leading-none transition-opacity ${
+                                    active
+                                      ? 'text-white/70 hover:bg-white/20'
+                                      : 'text-black/40 hover:bg-black/10 hover:text-apple-red dark:text-white/40 dark:hover:bg-white/15'
+                                  }`}
+                                >
+                                  ×
+                                </button>
+                              </span>
                             )
                           })}
+                          {p.modelsOverridden && (
+                            <button
+                              data-model-restore
+                              title="恢复默认模型列表"
+                              onClick={() => void restoreModels(p.id)}
+                              disabled={modelBusy === p.id}
+                              className="rounded-full px-2 py-1.5 text-[10.5px] text-black/40 underline underline-offset-2 hover:text-apple-blue dark:text-white/40"
+                            >
+                              恢复默认
+                            </button>
+                          )}
                         </div>
                       )}
                     </div>
@@ -399,35 +477,6 @@ export default function SettingsModal({ open, onClose, onEngineRestarted }: Prop
                 })}
               </div>
             )}
-          </section>
-
-          {/* 数据目录 */}
-          <section>
-            <h3 className="mb-2 flex items-center gap-1.5 text-[12.5px] font-semibold text-black/70 dark:text-white/70">
-              <FolderOpen size={13} strokeWidth={2.2} /> DSH 数据目录
-            </h3>
-            <p className="mb-2 text-[11.5px] leading-relaxed text-black/40 dark:text-white/40">
-              会话、凭据与配置存于此目录。可指向已有部署（如 F:\.dsh）直接复用其 API Key
-              与会话；留空则使用应用自带目录。
-            </p>
-            <div className="flex items-center gap-2">
-              <input
-                data-dsh-home
-                className={field}
-                placeholder="留空 = 应用自带目录"
-                value={dshHome}
-                onChange={(e) => setDshHome(e.target.value)}
-              />
-              <button
-                data-home-apply
-                disabled={homeBusy}
-                onClick={() => void applyHome()}
-                className="h-9 shrink-0 rounded-lg bg-apple-blue px-4 text-[12.5px] font-medium text-white transition-all hover:brightness-110 active:scale-95 disabled:opacity-60"
-              >
-                {homeBusy ? <Loader2 size={13} className="animate-spin" /> : '应用'}
-              </button>
-            </div>
-            {homeMsg && <p className="mt-1.5 text-[11px] text-apple-green">{homeMsg}</p>}
           </section>
 
           {/* MCP 服务器（组合级配置：cordis.patch.yml） */}

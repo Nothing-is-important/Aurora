@@ -71,6 +71,8 @@ declare global {
         state: () => Promise<LlmState>
         select: (provider: string, model: string) => Promise<LlmState>
         discover: (providerId: string) => Promise<LlmDiscoverResult>
+        removeModel: (providerId: string, modelId: string) => Promise<LlmState>
+        restoreModels: (providerId: string) => Promise<LlmState>
       }
       credentials: {
         has: (ref: string) => Promise<boolean>
@@ -127,6 +129,7 @@ export interface LlmProviderInfo {
   apiKeyEnv: string | null
   hasKey: boolean
   models: LlmModelInfo[]
+  modelsOverridden?: boolean
 }
 
 export interface LlmState {
