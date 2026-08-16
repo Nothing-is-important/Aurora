@@ -15,4 +15,7 @@ contextBridge.exposeInMainWorld('auroraShell', {
     ipcRenderer.on('shell:state', listener)
     return () => ipcRenderer.removeListener('shell:state', listener)
   },
+  // Aurora 设置
+  getSettings: () => ipcRenderer.invoke('shell:settings:get'),
+  setSettings: (patch) => ipcRenderer.invoke('shell:settings:set', patch),
 })

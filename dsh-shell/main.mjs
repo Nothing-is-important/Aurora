@@ -2,7 +2,7 @@
 // 原生窗口/托盘/快捷键/通知包裹 `dsh web`（DeepSeek Harness 官方 Web 界面）。
 // 冒烟模式：SMOKE=1 时自动跑审计序列，打印 [SMOKE] report 并以 0/2 退出。
 import { app, BrowserWindow, Tray, Menu, nativeImage, ipcMain, globalShortcut, Notification, dialog, shell, screen } from 'electron'
-import { mkdirSync, rmSync, renameSync, writeFileSync, readFileSync, existsSync, appendFileSync } from 'node:fs'
+import { mkdirSync, rmSync, renameSync, writeFileSync, readFileSync, existsSync, appendFileSync, watchFile } from 'node:fs'
 import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { join } from 'node:path'
@@ -300,7 +300,7 @@ function rebuildTrayMenu() {
     { label: '隐藏窗口', click: () => win?.hide() },
     { type: 'separator' },
     { label: '重启 DeepSeek Harness 服务', click: () => void restartDsh() },
-    { label: '切换 DSH 数据目录…', click: () => void chooseDshHome() },
+    { label: '设置…', click: () => openSettingsWindow() },
     { type: 'separator' },
     {
       label: '开机自启',
@@ -337,16 +337,6 @@ function applyAutostart(enabled) {
   }
 }
 
-async function chooseDshHome() {
-  const r = await dialog.showOpenDialog(win ?? undefined, {
-    title: '选择 DeepSeek Harness 数据目录（DSH_HOME）',
-    properties: ['openDirectory', 'createDirectory'],
-  })
-  if (r.canceled || !r.filePaths[0]) return
-  settings.set('dshHome', r.filePaths[0])
-  void restartDsh()
-}
-
 async function restartDsh() {
   publishState({ phase: 'restarting', message: '正在重启 DeepSeek Harness 服务…' })
   showOffline('restarting', '正在重启 DeepSeek Harness 服务…')
@@ -360,6 +350,68 @@ async function restartDsh() {
   }
 }
 
+// ---------- Aurora 设置窗口 ----------
+let settingsWin = null
+
+function openSettingsWindow() {
+  if (settingsWin && !settingsWin.isDestroyed()) {
+    settingsWin.show()
+    settingsWin.focus()
+    return
+  }
+  settingsWin = new BrowserWindow({
+    width: 480,
+    height: 560,
+    minWidth: 420,
+    minHeight: 480,
+    frame: false,
+    titleBarStyle: 'hidden',
+    titleBarOverlay: { color: '#101014', symbolColor: '#d5d5dc', height: 32 },
+    backgroundColor: '#101014',
+    show: false,
+    webPreferences: {
+      preload: join(__dirname, 'preload.cjs'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  })
+  settingsWin.once('ready-to-show', () => settingsWin.show())
+  settingsWin.on('closed', () => {
+    settingsWin = null
+  })
+  void settingsWin.loadFile(join(__dirname, 'pages', 'settings.html'))
+}
+
+function shellSettingsSnapshot() {
+  return {
+    dshHome: settings.get('dshHome') ?? '',
+    autostart: settings.get('autostart') === true,
+    startHidden: settings.get('startHidden') === true,
+    closeToTray: settings.get('closeToTray') !== false,
+    version: app.getVersion(),
+    status: currentState.phase,
+    url: manager?.url ?? null,
+  }
+}
+
+ipcMain.handle('shell:settings:get', () => shellSettingsSnapshot())
+ipcMain.handle('shell:settings:set', async (_e, patch) => {
+  const oldHome = settings.get('dshHome') ?? ''
+  const newHome = typeof patch.dshHome === 'string' ? patch.dshHome.trim() : oldHome
+  if (typeof patch.autostart === 'boolean') {
+    settings.set('autostart', patch.autostart)
+    applyAutostart(patch.autostart)
+  }
+  if (typeof patch.startHidden === 'boolean') settings.set('startHidden', patch.startHidden)
+  if (typeof patch.closeToTray === 'boolean') settings.set('closeToTray', patch.closeToTray)
+  if (newHome && newHome !== oldHome) {
+    const r = await rehomeDsh(newHome)
+    return { ...shellSettingsSnapshot(), restarted: r.restarted, error: r.error }
+  }
+  return { ...shellSettingsSnapshot(), restarted: false }
+})
+
 // ---------- 通知 ----------
 function notify(title, body) {
   if (SMOKE) return
@@ -372,28 +424,79 @@ function notify(title, body) {
 }
 
 // ---------- dsh 生命周期接线 ----------
-function wireDsh() {
-  const home = settings.get('dshHome') || defaultDshHome()
-  mkdirSync(home, { recursive: true })
-  manager = new DshManager({ dshHome: home, log, pipeStdout: SMOKE })
-  manager.on('ready', (url) => {
+function wireManager(mgr) {
+  mgr.on('ready', (url) => {
     publishState({ phase: 'ready', title: 'DeepSeek Harness', message: `运行中 · ${url}` })
-    if (manager.restartCount > 0) notify('DeepSeek Harness 服务已恢复', url)
+    if (mgr.restartCount > 0) notify('DeepSeek Harness 服务已恢复', url)
     loadRemote()
   })
-  manager.on('exit', ({ unexpected }) => {
+  mgr.on('exit', ({ unexpected }) => {
     if (unexpected) {
       notify('DeepSeek Harness 服务已断开', '正在自动重启…')
       showOffline('restarting', 'DeepSeek Harness 服务已断开，正在自动重启…')
-      manager.scheduleRestart()
+      mgr.scheduleRestart()
     }
   })
-  manager.on('restart-scheduled', ({ count, delay }) => {
+  mgr.on('restart-scheduled', ({ count, delay }) => {
     publishState({ phase: 'restarting', message: `服务已断开，第 ${count} 次自动重启（${(delay / 1000).toFixed(0)}s 后）…` })
   })
-  manager.on('restart-failed', (err) => {
+  mgr.on('restart-failed', (err) => {
     showOffline('error', `自动重启失败：${err.message}`)
   })
+}
+
+function wireDsh() {
+  const home = settings.get('dshHome') || defaultDshHome()
+  mkdirSync(home, { recursive: true })
+  const mgr = new DshManager({ dshHome: home, log, pipeStdout: SMOKE })
+  manager = mgr
+  wireManager(mgr)
+  attachSettingsWatcher(home)
+}
+
+/** 切换数据目录：换新 manager（旧实例的 home 不可变）后重启服务 */
+async function rehomeDsh(newHome) {
+  settings.set('dshHome', newHome)
+  publishState({ phase: 'restarting', message: '正在切换数据目录并重启服务…' })
+  showOffline('restarting', '正在切换数据目录并重启服务…')
+  await manager.stop()
+  wireDsh()
+  try {
+    await manager.start()
+    loadRemote()
+    return { restarted: true }
+  } catch (err) {
+    log('rehome restart failed:', err.message)
+    showOffline('error', `启动失败：${err.message}`)
+    return { restarted: false, error: err.message }
+  }
+}
+
+// ---------- settings.yaml 变更监听（官方界面模型增删后自动刷新列表） ----------
+let settingsWatcher = null
+let settingsReloadTimer = null
+
+function attachSettingsWatcher(home) {
+  if (settingsWatcher) {
+    settingsWatcher.unref?.()
+    settingsWatcher = null
+  }
+  const file = join(home, 'settings.yaml')
+  try {
+    settingsWatcher = watchFile(file, { interval: 1500 }, (curr, prev) => {
+      if (!curr || !prev || curr.mtimeMs === prev.mtimeMs) return
+      if (settingsReloadTimer) clearTimeout(settingsReloadTimer)
+      settingsReloadTimer = setTimeout(() => {
+        // 官方界面在删除模型后列表不自动刷新（其内部快照未更新）；
+        // 设置文件变更即触发一次整页重载，效果等同「关闭再打开」。
+        if (win && !win.isDestroyed() && win.webContents.getURL().startsWith('http')) {
+          win.webContents.reload()
+        }
+      }, 900)
+    })
+  } catch (err) {
+    log('settings watcher failed:', err.message)
+  }
 }
 
 // ---------- 冒烟审计 ----------
@@ -542,6 +645,45 @@ async function runSmoke(extra = {}) {
       const dom2 = await domProbe()
       ok('reloadedAfterRestart', dom2.hasHarness === true && dom2.textarea >= 1, dom2)
     }
+  }
+
+  // phase6b: Aurora 设置窗口 + 换数据目录重启 + settings.yaml 变更自动刷新
+  try {
+    openSettingsWindow()
+    await sleep(1200)
+    const settingsDom = await settingsWin.webContents.executeJavaScript(
+      `({ dshHome: !!document.getElementById('dshHome'), apply: !!document.getElementById('applyHome'), meta: !!document.getElementById('meta') })`,
+    )
+    ok(
+      'settingsWindowWorks',
+      !!settingsWin && !settingsWin.isDestroyed() && settingsDom.dshHome === true && settingsDom.apply === true,
+      settingsDom,
+    )
+    const snap = shellSettingsSnapshot()
+    ok('settingsSnapshot', snap.version === app.getVersion() && typeof snap.url === 'string', snap)
+    // 换到全新数据目录：旧 home 不变的 bug 回归断言
+    const newHome = join(app.getPath('temp'), `aurora-dsh-rehome-${process.pid}`)
+    const oldUrl = manager.url
+    const rehomeRes = await rehomeDsh(newHome)
+    ok('rehomeRestarted', rehomeRes.restarted === true && manager.url && manager.url !== oldUrl, { oldUrl, newUrl: manager.url })
+    ok('rehomeProbe', manager.url ? await probeUrl(manager.url, 8000) : false)
+    // settings.yaml 变更 → 主窗口自动重载（官方界面模型增删后列表刷新的兜底）
+    let reloadCount = 0
+    const onLoad = () => reloadCount++
+    win.webContents.on('did-start-loading', onLoad)
+    await waitFor(() => win.webContents.getURL().startsWith('http'), 15000)
+    await sleep(2000)
+    const before = reloadCount
+    writeFileSync(join(newHome, 'settings.yaml'), 'ui-onboarding:\n  welcomeNoticeVersion: smoke\n', 'utf8')
+    const reloaded = await waitFor(() => reloadCount > before, 8000, 400)
+    ok('settingsChangeReloadsPage', reloaded, { before, after: reloadCount })
+    win.webContents.removeListener('did-start-loading', onLoad)
+    settingsWin?.close()
+    settingsWin = null
+    // 恢复默认目录（冒烟结束后的 userData 干净）
+    settings.set('dshHome', '')
+  } catch (err) {
+    ok('settingsWindowWorks', false, String(err))
   }
 
   // phase7: 截图存证（写到 userData：打包后 app.asar 只读）
